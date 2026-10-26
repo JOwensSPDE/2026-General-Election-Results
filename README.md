@@ -8,6 +8,7 @@ A responsive election-night results page and Cloudflare Worker for Delaware's No
 - Only races with at least two qualified candidates are displayed.
 - 90 face-centered 400×400 headshots prepared from the supplied source images.
 - Democratic, Republican and independent candidates are color-coded within each race.
+- Candidates are alphabetical by last name before results arrive, then reorder by vote total as each race begins reporting; tied candidates remain alphabetical.
 - Statewide election-district reporting, automatic updates and a manual refresh button.
 - A Cloudflare scheduled Worker that requests Delaware's source once per minute and serves all readers from KV.
 - Responsive desktop/mobile layouts and iframe-aware jump links.
