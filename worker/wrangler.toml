@@ -1,0 +1,22 @@
+name = "delaware-general-results-2026"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+RESULTS_SOURCE_URL = "https://elections.delaware.gov/results/enr/GE2026.html?group=Statewide&filter="
+ALLOWED_ORIGIN = "https://spotlightdelaware.org,https://jowensspde.github.io"
+CACHE_SECONDS = "15"
+STALE_AFTER_SECONDS = "180"
+REFRESH_WINDOW_START = "2026-11-03T19:45:00-05:00"
+REFRESH_WINDOW_END = "2026-11-04T08:00:00-05:00"
+
+[[kv_namespaces]]
+binding = "RESULTS_CACHE"
+id = "510fd34e357b4298ab22ba6d17c688cb"
+
+[triggers]
+crons = ["45-59 0 4 11 *", "* 1-12 4 11 *"]
+
+[observability]
+enabled = true
+head_sampling_rate = 1
