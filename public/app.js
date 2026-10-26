@@ -291,6 +291,7 @@
   }
 
   function displayTitle(title) {
+    if (/^(?:U\.?\s*S\.?\s+)?Representative in Congress$/i.test(title)) return "U.S. House";
     return title.replace(/^State Senator/i, "State Senate").replace(/^State Representative/i, "State House");
   }
 
@@ -329,7 +330,8 @@
   function candidateColor(party, index = 0) {
     if (/^Democratic/i.test(party || "")) return ["#0b4d78", "#1769aa"][index % 2];
     if (/^Republican/i.test(party || "")) return ["#972d29", "#c43d38"][index % 2];
-    return ["#b57912", "#d29a32", "#7d689e"][index % 3];
+    if (/Independent/i.test(party || "")) return "#7442a8";
+    return "#b57912";
   }
 
   function compareCandidateLastName(a, b) {
