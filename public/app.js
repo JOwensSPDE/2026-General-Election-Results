@@ -156,6 +156,10 @@
 
   function renderGroup(group, reporting) {
     const contests = state.contests.filter(group.match).sort((a, b) => {
+      if (group.id === "statewide-offices") {
+        const order = ["Attorney General", "State Treasurer", "Auditor of Accounts"];
+        return order.indexOf(a.title) - order.indexOf(b.title);
+      }
       if (group.districtSort) {
         const districtDiff = district(a.title) - district(b.title);
         if (districtDiff) return districtDiff;
@@ -173,6 +177,13 @@
 
   function renderCard(contest, reporting) {
     const votesCast = contest.candidates.reduce((sum, candidate) => sum + (Number(candidate.votes) || 0), 0);
+    const orderedCandidates = [...contest.candidates].sort((a, b) => {
+      if (votesCast) {
+        const voteDifference = (Number(b.votes) || 0) - (Number(a.votes) || 0);
+        if (voteDifference) return voteDifference;
+      }
+      return compareCandidateLastName(a, b);
+    });
     const awaiting = votesCast === 0;
     const card = element("article", `race-card general${awaiting ? " awaiting" : ""}`);
     card.id = contest.id || contestKey(contest);
@@ -187,8 +198,8 @@
 
     const bar = element("div", "share-bar");
     bar.setAttribute("role", "img");
-    bar.setAttribute("aria-label", awaiting ? "No votes reported" : voteShareLabel(contest.candidates, votesCast));
-    contest.candidates.forEach((candidate, index) => {
+    bar.setAttribute("aria-label", awaiting ? "No votes reported" : voteShareLabel(orderedCandidates, votesCast));
+    orderedCandidates.forEach((candidate, index) => {
       const share = candidateShare(candidate, votesCast);
       const segment = element("span", "share-segment");
       segment.style.width = `${share}%`;
@@ -197,10 +208,7 @@
     });
 
     const list = element("ol", "candidate-list");
-    [...contest.candidates].sort((a, b) => {
-      if (awaiting) return 0;
-      return (Number(b.votes) || 0) - (Number(a.votes) || 0);
-    }).forEach((candidate, index) => list.append(renderCandidate(candidate, votesCast, index)));
+    orderedCandidates.forEach((candidate, index) => list.append(renderCandidate(candidate, votesCast, index)));
 
     const foot = element("div", "card-foot");
     foot.append(element("span", "", awaiting ? "No votes reported" : `${formatNumber(votesCast)} votes counted`), element("span", "", "Unofficial"));
@@ -232,8 +240,11 @@
   }
 
   function buildNav() {
-    els.nav.replaceChildren(...groups.map(group => {
-      const link = element("a", "", shortNavTitle(group.title));
+    const navigationGroups = groups
+      .filter(group => group.id !== "us-house")
+      .map(group => group.id === "us-senate" ? { ...group, navTitle: "U.S. Senate & House" } : group);
+    els.nav.replaceChildren(...navigationGroups.map(group => {
+      const link = element("a", "", group.navTitle || shortNavTitle(group.title));
       link.href = `#${group.id}`;
       link.addEventListener("click", event => {
         const target = document.getElementById(group.id);
@@ -319,6 +330,19 @@
     if (/^Democratic/i.test(party || "")) return ["#0b4d78", "#1769aa"][index % 2];
     if (/^Republican/i.test(party || "")) return ["#972d29", "#c43d38"][index % 2];
     return ["#b57912", "#d29a32", "#7d689e"][index % 3];
+  }
+
+  function compareCandidateLastName(a, b) {
+    return lastNameKey(a.name).localeCompare(lastNameKey(b.name), "en", { sensitivity: "base" })
+      || a.name.localeCompare(b.name, "en", { sensitivity: "base" });
+  }
+
+  function lastNameKey(name) {
+    const cleaned = name.replace(/"[^"]+"/g, " ")
+      .replace(/\b(Jr|Sr|II|III|IV)\.?\b/gi, " ")
+      .replace(/[^A-Za-zÀ-ÖØ-öø-ÿ'’-]+/g, " ")
+      .trim();
+    return cleaned.split(/\s+/).at(-1) || cleaned;
   }
 
   function shortParty(party) {
