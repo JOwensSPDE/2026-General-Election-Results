@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Live 2026 Delaware general election results from Spotlight Delaware.">
+  <title>2026 Delaware General Election Results | Spotlight Delaware</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Montserrat:wght@700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#results">Skip to results</a>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="https://spotlightdelaware.org" aria-label="Spotlight Delaware home">
+        <img class="brand-logo" src="assets/spotlight-logo.png" alt="Spotlight Delaware">
+      </a>
+      <a class="election-center-link" href="https://spotlightdelaware.org/election-center-2026/">Election Center 2026</a>
+    </div>
+  </header>
+
+  <main id="results">
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <p class="eyebrow">Live results</p>
+          <h1>2026 Delaware<br>General Election</h1>
+          <p class="dek">Unofficial results update automatically from the Delaware Department of Elections after polls close at 8 p.m. on Tuesday, Nov. 3.</p>
+        </div>
+        <div class="statewide-card" aria-label="Statewide reporting status">
+          <div class="statewide-topline"><span>STATEWIDE</span><span id="statewide-status">Awaiting results</span></div>
+          <div class="big-percent" id="statewide-percent">0%</div>
+          <div class="meter" aria-hidden="true"><span id="statewide-meter"></span></div>
+          <p id="statewide-detail">0 of 0 election districts reporting</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="status-strip" aria-live="polite">
+      <div class="wrap status-inner">
+        <div class="live-state"><span class="pulse" id="pulse"></span><strong id="live-label">PRE-ELECTION</strong></div>
+        <p id="update-label">Results will begin updating after polls close.</p>
+        <button class="refresh-button" id="refresh" type="button">Refresh now</button>
+      </div>
+    </section>
+
+    <nav class="race-nav" aria-label="Jump to race category">
+      <div class="wrap nav-scroll" id="race-nav"></div>
+    </nav>
+
+    <div class="wrap notice" id="notice" hidden></div>
+    <div class="wrap results-shell" id="race-groups" aria-busy="true"></div>
+
+    <footer class="results-footer">
+      <div class="wrap footer-grid">
+        <div><strong>About these results</strong><p>Vote totals are unofficial until certified. “Reporting” reflects the statewide election-district count published by the Delaware Department of Elections; it is not an estimate of ballots remaining.</p></div>
+        <div><strong>Source</strong><p><a id="source-link" href="https://elections.delaware.gov/results/enr/GE2026.html?group=Statewide&amp;filter=" target="_blank" rel="noreferrer">Delaware Department of Elections</a></p></div>
+      </div>
+    </footer>
+  </main>
+
+  <noscript>This interactive requires JavaScript to display live election results.</noscript>
+  <script src="config.js"></script>
+  <script src="data/headshots.js"></script>
+  <script src="data/seed-contests.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
