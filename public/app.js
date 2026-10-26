@@ -229,7 +229,7 @@
 
     const detail = element("div", "candidate-detail");
     detail.append(
-      element("div", "candidate-name", candidate.name),
+      element("div", "candidate-name", candidate.incumbent ? `${candidate.name}*` : candidate.name),
       element("div", "candidate-votes", `${shortParty(candidate.party)} · ${totalVotes ? `${formatNumber(candidate.votes)} votes` : "Waiting for results"}`)
     );
     const pct = totalVotes ? candidateShare(candidate, totalVotes) : null;
@@ -243,7 +243,7 @@
     const navigationGroups = groups
       .filter(group => group.id !== "us-house")
       .map(group => group.id === "us-senate" ? { ...group, navTitle: "U.S. Senate & House" } : group);
-    els.nav.replaceChildren(...navigationGroups.map(group => {
+    const links = navigationGroups.map(group => {
       const link = element("a", "", group.navTitle || shortNavTitle(group.title));
       link.href = `#${group.id}`;
       link.addEventListener("click", event => {
@@ -256,7 +256,9 @@
         }, "*");
       });
       return link;
-    }));
+    });
+    const incumbentNote = element("span", "incumbent-note", "Incumbents marked by *");
+    els.nav.replaceChildren(...links, incumbentNote);
   }
 
   function demoState() {
