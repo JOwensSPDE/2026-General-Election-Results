@@ -190,10 +190,21 @@
 
     const head = element("div", "card-head");
     const kicker = element("div", "card-kicker");
-    kicker.append(
-      element("span", "party-pill", "General election"),
-      element("span", "reporting-mini", reporting.total ? `${formatPercent(reporting.percentage, true)}% reporting statewide` : "Awaiting reports")
-    );
+    const reportingMini = element("span", "reporting-mini");
+    const raceReporting = contest.reporting;
+    if (raceReporting?.total) {
+      const reported = Math.max(0, Number(raceReporting.reported) || 0);
+      const total = Math.max(reported, Number(raceReporting.total) || 0);
+      const outstanding = Math.max(0, total - reported);
+      reportingMini.append(
+        element("span", "", `${formatNumber(reported)} of ${formatNumber(total)} precincts reporting`),
+        element("span", "outstanding-count", `${formatNumber(outstanding)} outstanding`)
+      );
+      reportingMini.title = `${formatPercent(raceReporting.percentage, true)}% of precincts in this race have reported`;
+    } else {
+      reportingMini.textContent = "Awaiting precinct data";
+    }
+    kicker.append(element("span", "party-pill", "General election"), reportingMini);
     head.append(kicker, element("h3", "", displayTitle(contest.title)));
 
     const bar = element("div", "share-bar");
@@ -272,7 +283,7 @@
         allocated += votes;
         return { ...candidate, votes, percentage: Number((votes / totalVotes * 100).toFixed(2)) };
       });
-      return { ...contest, candidates };
+      return { ...contest, candidates, reporting: demoRaceReporting(contest.title, contestIndex) };
     });
     return {
       contests,
@@ -283,6 +294,28 @@
       status: "DEMO DATA",
       stale: false,
       live: true
+    };
+  }
+
+  function demoRaceReporting(title, index) {
+    let total;
+    if (/^(?:U\.S\. Senator|Representative in Congress|Attorney General|Auditor of Accounts|State Treasurer)$/i.test(title)) {
+      total = 530;
+    } else if (/^State Senator/i.test(title)) {
+      total = 24 + (index % 10);
+    } else if (/^State Representative/i.test(title)) {
+      total = 9 + (index % 8);
+    } else {
+      total = 18 + (index % 11);
+    }
+    const ratio = 0.46 + ((index * 7) % 25) / 100;
+    const reported = Math.min(total, Math.round(total * ratio));
+    return {
+      reported,
+      total,
+      percentage: Number((reported / total * 100).toFixed(2)),
+      outstanding: total - reported,
+      label: "Precincts reporting in this race",
     };
   }
 
