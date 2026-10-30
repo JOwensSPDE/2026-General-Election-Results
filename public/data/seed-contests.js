@@ -1,18 +1,18 @@
 window.SEED_CONTESTS = [
   { title: "U.S. Senator", candidates: [
-    { name: "Chris Coons", party: "Democratic" },
+    { name: "Chris Coons", party: "Democratic", incumbent: true },
     { name: "Michael \"Dr. Mike\" Katz", party: "Republican" }
   ] },
   { title: "Representative in Congress", candidates: [
-    { name: "Sarah McBride", party: "Democratic" },
+    { name: "Sarah McBride", party: "Democratic", incumbent: true },
     { name: "Joseph \"Dr. Joe\" Arminio", party: "Republican" }
   ] },
   { title: "Attorney General", candidates: [
-    { name: "Kathy Jennings", party: "Democratic" },
+    { name: "Kathy Jennings", party: "Democratic", incumbent: true },
     { name: "David C. \"Dave\" Graham", party: "Republican" }
   ] },
   { title: "Auditor of Accounts", candidates: [
-    { name: "Lydia York", party: "Democratic" },
+    { name: "Lydia York", party: "Democratic", incumbent: true },
     { name: "April Callaway", party: "Republican" },
     { name: "Austin Cassidy", party: "Independent Party of Delaware" }
   ] },
@@ -21,7 +21,7 @@ window.SEED_CONTESTS = [
     { name: "Michael Ramone", party: "Republican" }
   ] },
   { title: "State Senator District 1", candidates: [
-    { name: "Dan Cruce", party: "Democratic" },
+    { name: "Dan Cruce", party: "Democratic", incumbent: true },
     { name: "Hildi Bachtle", party: "Republican" },
     { name: "Steven Washington", party: "Independent Party of Delaware" }
   ] },
@@ -31,7 +31,7 @@ window.SEED_CONTESTS = [
     { name: "Carolyn Frank", party: "Independent Party of Delaware" }
   ] },
   { title: "State Senator District 7", candidates: [
-    { name: "Spiros Mantzavinos", party: "Democratic" },
+    { name: "Spiros Mantzavinos", party: "Democratic", incumbent: true },
     { name: "Chris Rowe", party: "Republican" }
   ] },
   { title: "State Senator District 8", candidates: [
@@ -39,11 +39,11 @@ window.SEED_CONTESTS = [
     { name: "Shane Cavanaugh", party: "Republican" }
   ] },
   { title: "State Senator District 12", candidates: [
-    { name: "Nicole Poore", party: "Democratic" },
+    { name: "Nicole Poore", party: "Democratic", incumbent: true },
     { name: "Mark Esposito", party: "Republican" }
   ] },
   { title: "State Senator District 14", candidates: [
-    { name: "Kyra L. Hoffner", party: "Democratic" },
+    { name: "Kyra L. Hoffner", party: "Democratic", incumbent: true },
     { name: "Mark Pugh", party: "Republican" }
   ] },
   { title: "State Senator District 15", candidates: [
@@ -52,10 +52,10 @@ window.SEED_CONTESTS = [
   ] },
   { title: "State Senator District 20", candidates: [
     { name: "Harry S. Gold", party: "Democratic" },
-    { name: "Gerald W. Hocker", party: "Republican" }
+    { name: "Gerald W. Hocker", party: "Republican", incumbent: true }
   ] },
   { title: "State Representative District 1", candidates: [
-    { name: "Nnamdi O. Chukwuocha", party: "Democratic" },
+    { name: "Nnamdi O. Chukwuocha", party: "Democratic", incumbent: true },
     { name: "Lisa McInnis", party: "Republican" }
   ] },
   { title: "State Representative District 3", candidates: [
@@ -72,11 +72,11 @@ window.SEED_CONTESTS = [
     { name: "Tanya Hettler", party: "Republican" }
   ] },
   { title: "State Representative District 7", candidates: [
-    { name: "Larry Lambert", party: "Democratic" },
+    { name: "Larry Lambert", party: "Democratic", incumbent: true },
     { name: "Shane Stoneman", party: "Republican" }
   ] },
   { title: "State Representative District 8", candidates: [
-    { name: "Sherae'a \"Rae\" Moore", party: "Democratic" },
+    { name: "Sherae'a \"Rae\" Moore", party: "Democratic", incumbent: true },
     { name: "Gary Taylor", party: "Republican" }
   ] },
   { title: "State Representative District 9", candidates: [
@@ -84,19 +84,19 @@ window.SEED_CONTESTS = [
     { name: "Jamar Money", party: "Republican" }
   ] },
   { title: "State Representative District 10", candidates: [
-    { name: "Melanie Ross Levin", party: "Democratic" },
+    { name: "Melanie Ross Levin", party: "Democratic", incumbent: true },
     { name: "Dolores Dunleavy", party: "Republican" }
   ] },
   { title: "State Representative District 11", candidates: [
     { name: "Tori Parker", party: "Democratic" },
-    { name: "Jeffrey N. Spiegelman", party: "Republican" }
+    { name: "Jeffrey N. Spiegelman", party: "Republican", incumbent: true }
   ] },
   { title: "State Representative District 12", candidates: [
-    { name: "Krista Griffith", party: "Democratic" },
+    { name: "Krista Griffith", party: "Democratic", incumbent: true },
     { name: "Steve Pickering", party: "Republican" }
   ] },
   { title: "State Representative District 14", candidates: [
-    { name: "Claire Snyder-Hall", party: "Democratic" },
+    { name: "Claire Snyder-Hall", party: "Democratic", incumbent: true },
     { name: "Mike Simpler", party: "Republican" }
   ] },
   { title: "State Representative District 16", candidates: [
@@ -104,27 +104,27 @@ window.SEED_CONTESTS = [
     { name: "Enala A. Mwashitete", party: "Republican" }
   ] },
   { title: "State Representative District 19", candidates: [
-    { name: "Kim Williams", party: "Democratic" },
+    { name: "Kim Williams", party: "Democratic", incumbent: true },
     { name: "Janyce Colmery", party: "Republican" }
   ] },
   { title: "State Representative District 20", candidates: [
-    { name: "Alonna Berry", party: "Democratic" },
+    { name: "Alonna Berry", party: "Democratic", incumbent: true },
     { name: "Gene Dvornick", party: "Republican" }
   ] },
   { title: "State Representative District 22", candidates: [
     { name: "Alex Green", party: "Democratic" },
-    { name: "Mike Smith", party: "Republican" }
+    { name: "Mike Smith", party: "Republican", incumbent: true }
   ] },
   { title: "State Representative District 24", candidates: [
-    { name: "Ed Osienski", party: "Democratic" },
+    { name: "Ed Osienski", party: "Democratic", incumbent: true },
     { name: "Stephen P. Ondich", party: "Republican" }
   ] },
   { title: "State Representative District 27", candidates: [
-    { name: "Eric Morrison", party: "Democratic" },
+    { name: "Eric Morrison", party: "Democratic", incumbent: true },
     { name: "Mary \"Penny\" Kubin", party: "Republican" }
   ] },
   { title: "State Representative District 31", candidates: [
-    { name: "Sean M. Lynn", party: "Democratic" },
+    { name: "Sean M. Lynn", party: "Democratic", incumbent: true },
     { name: "Anton Brogden", party: "Republican" }
   ] },
   { title: "State Representative District 33", candidates: [
@@ -133,11 +133,11 @@ window.SEED_CONTESTS = [
   ] },
   { title: "State Representative District 34", candidates: [
     { name: "Annie Norman", party: "Democratic" },
-    { name: "Lyndon D. Yearick", party: "Republican" }
+    { name: "Lyndon D. Yearick", party: "Republican", incumbent: true }
   ] },
   { title: "State Representative District 36", candidates: [
     { name: "Andrew \"Andy\" Gorlich", party: "Democratic" },
-    { name: "Bryan William Shupe", party: "Republican" }
+    { name: "Bryan William Shupe", party: "Republican", incumbent: true }
   ] },
   { title: "State Representative District 38", candidates: [
     { name: "Maureen Madden", party: "Democratic" },
@@ -148,7 +148,7 @@ window.SEED_CONTESTS = [
     { name: "John Atkins", party: "Republican" }
   ] },
   { title: "New Castle County Council District 2", candidates: [
-    { name: "Dee Durham", party: "Democratic" },
+    { name: "Dee Durham", party: "Democratic", incumbent: true },
     { name: "Jamie Collins", party: "Republican" }
   ] },
   { title: "New Castle County Council District 3", candidates: [
@@ -156,24 +156,24 @@ window.SEED_CONTESTS = [
     { name: "Melissa S. Brayman", party: "Republican" }
   ] },
   { title: "New Castle County Council District 6", candidates: [
-    { name: "David Carter", party: "Democratic" },
+    { name: "David Carter", party: "Democratic", incumbent: true },
     { name: "Alison T. Gibbs", party: "Republican" }
   ] },
   { title: "Kent County Recorder of Deeds", candidates: [
     { name: "Ramona Bracy", party: "Democratic" },
-    { name: "Eugenia Thornton", party: "Republican" }
+    { name: "Eugenia Thornton", party: "Republican", incumbent: true }
   ] },
   { title: "Kent County Levy Court At-Large", candidates: [
-    { name: "Terry L. Pepper", party: "Democratic" },
+    { name: "Terry L. Pepper", party: "Democratic", incumbent: true },
     { name: "Frank E Coleman", party: "Republican" }
   ] },
   { title: "Sussex County Council District 4", candidates: [
     { name: "Justine Cuccia", party: "Democratic" },
-    { name: "Douglas B. Hudson", party: "Republican" }
+    { name: "Douglas B. Hudson", party: "Republican", incumbent: true }
   ] },
   { title: "Sussex County Council District 5", candidates: [
     { name: "Jill Hicks", party: "Democratic" },
-    { name: "John L. Rieley", party: "Republican" }
+    { name: "John L. Rieley", party: "Republican", incumbent: true }
   ] }
 ].map((contest, index) => ({
   id: contest.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
