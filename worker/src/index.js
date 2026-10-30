@@ -3,6 +3,9 @@ const CACHE_KEY = "delaware-general-results-2026:last-good";
 const STATUS_KEY = "delaware-general-results-2026:refresh-status";
 const DEFAULT_REFRESH_START = "2026-11-03T19:45:00-05:00";
 const DEFAULT_REFRESH_END = "2026-11-04T08:00:00-05:00";
+const STATEWIDE_FEED = "Election_StatewideResults_ID";
+const DISTRICT_REPORTING_FEED = "Election_DistrictReporting_ID";
+const BY_ELECTION_DISTRICT_FEED = "Election_ByElectionDistrict_ID";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
@@ -97,6 +100,7 @@ async function refreshResults(env) {
 
   const sourceUrl = env.RESULTS_SOURCE_URL || DEFAULT_SOURCE;
   const dataUrl = resultsDataUrl(sourceUrl);
+  const auxiliaryUrls = reportingDataUrls(sourceUrl);
   const previous = await readRefreshStatus(env);
   const now = new Date();
   const attemptAt = now.toISOString();
@@ -105,13 +109,18 @@ async function refreshResults(env) {
   if (Number.isFinite(nextAttemptMs) && nextAttemptMs > now.getTime()) return;
 
   try {
-    const upstream = await fetch(dataUrl, {
+    const requestInit = {
       headers: {
         "accept": "application/json,text/html;q=0.5",
-        "user-agent": "Spotlight Delaware election-results monitor/1.2 (+https://spotlightdelaware.org)",
+        "user-agent": "Spotlight Delaware election-results monitor/1.3 (+https://spotlightdelaware.org)",
       },
       cf: { cacheTtl: 0, cacheEverything: false },
-    });
+    };
+    const [upstream, districtReportingRows, electionDistrictRows] = await Promise.all([
+      fetch(dataUrl, requestInit),
+      fetchOptionalRows(auxiliaryUrls.districtReporting, requestInit),
+      fetchOptionalRows(auxiliaryUrls.byElectionDistrict, requestInit),
+    ]);
 
     if (!upstream.ok) {
       const error = new Error(`Delaware results feed returned HTTP ${upstream.status}`);
@@ -120,7 +129,11 @@ async function refreshResults(env) {
     }
 
     const payload = await upstream.text();
-    const parsed = parseResultsPayload(payload, sourceUrl);
+    const parsed = attachRaceReporting(
+      parseResultsPayload(payload, sourceUrl),
+      electionDistrictRows,
+      districtReportingRows,
+    );
     const body = { ...parsed, fetchedAt: attemptAt, stale: false };
 
     await Promise.all([
@@ -155,13 +168,185 @@ function retryDelaySeconds(error, failures) {
 }
 
 export function resultsDataUrl(sourceUrl = DEFAULT_SOURCE) {
+  return electionFeedUrl(sourceUrl, STATEWIDE_FEED) || sourceUrl;
+}
+
+export function reportingDataUrls(sourceUrl = DEFAULT_SOURCE) {
+  return {
+    districtReporting: electionFeedUrl(sourceUrl, DISTRICT_REPORTING_FEED),
+    byElectionDistrict: electionFeedUrl(sourceUrl, BY_ELECTION_DISTRICT_FEED),
+  };
+}
+
+function electionFeedUrl(sourceUrl, feedName) {
   const url = new URL(sourceUrl);
   const match = url.pathname.match(/^(.*\/)([a-z0-9_-]+)\.html$/i);
-  if (!match || !url.pathname.includes("/results/enr/")) return url.toString();
-  url.pathname = `${match[1]}Election_StatewideResults_ID_${match[2].toUpperCase()}.json`;
+  if (!match || !url.pathname.includes("/results/enr/")) return null;
+  url.pathname = `${match[1]}${feedName}_${match[2].toUpperCase()}.json`;
   url.search = "";
   url.hash = "";
   return url.toString();
+}
+
+async function fetchOptionalRows(url, requestInit) {
+  if (!url) return null;
+  try {
+    const response = await fetch(url, requestInit);
+    if (!response.ok) return null;
+    return rowsFromJson(await response.text());
+  } catch {
+    return null;
+  }
+}
+
+function rowsFromJson(input) {
+  let value;
+  try {
+    value = typeof input === "string" ? JSON.parse(input) : input;
+  } catch {
+    return null;
+  }
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return null;
+  for (const key of ["rows", "data", "results", "items"]) {
+    if (Array.isArray(value[key])) return value[key];
+  }
+  return null;
+}
+
+export function attachRaceReporting(parsed, electionDistrictInput, districtReportingInput) {
+  const raceReporting = parseRaceReporting(electionDistrictInput, districtReportingInput);
+  const contests = parsed.contests.map(contest => {
+    const reporting = raceReporting[contestLookupKey(contest.title)]
+      || (isStatewideContest(contest.title) ? parsed.reporting : null);
+    return reporting ? { ...contest, reporting } : contest;
+  });
+  return {
+    ...parsed,
+    contests,
+    raceReportingAvailable: contests.some(contest => contest.reporting?.total),
+  };
+}
+
+export function parseRaceReporting(electionDistrictInput, districtReportingInput) {
+  const electionDistrictRows = rowsFromJson(electionDistrictInput) || [];
+  const districtReportingRows = rowsFromJson(districtReportingInput) || [];
+  const statusByPrecinct = new Map();
+  const directByContest = new Map();
+
+  for (const row of districtReportingRows) {
+    if (!row || typeof row !== "object") continue;
+    const precinct = precinctKey(row);
+    const status = reportedStatus(row);
+    if (precinct && status !== null) statusByPrecinct.set(precinct, status);
+
+    const title = contestTitle(row);
+    const reported = rowNumber(row, [
+      "Precincts Reported", "Election Districts Reported", "Districts Reported", "Reported Precincts",
+    ]);
+    const total = rowNumber(row, [
+      "Total Precincts", "Total Election Districts", "Election Districts", "Precinct Total",
+    ]);
+    if (title && !precinct && total > 0) {
+      directByContest.set(contestLookupKey(title), reportingRecord(reported, total));
+    }
+  }
+
+  const precinctsByContest = new Map();
+  for (const row of [...electionDistrictRows, ...districtReportingRows]) {
+    if (!row || typeof row !== "object") continue;
+    const title = contestTitle(row);
+    const precinct = precinctKey(row);
+    if (!title || !precinct) continue;
+    const key = contestLookupKey(title);
+    if (!precinctsByContest.has(key)) precinctsByContest.set(key, new Map());
+    const precincts = precinctsByContest.get(key);
+    const rowStatus = reportedStatus(row);
+    const prior = precincts.get(precinct);
+    const reported = statusByPrecinct.has(precinct)
+      ? statusByPrecinct.get(precinct)
+      : (rowStatus ?? rowHasVotes(row));
+    precincts.set(precinct, Boolean(prior || reported));
+  }
+
+  const result = {};
+  for (const [key, precincts] of precinctsByContest) {
+    const total = precincts.size;
+    const reported = [...precincts.values()].filter(Boolean).length;
+    if (total) result[key] = reportingRecord(reported, total);
+  }
+  for (const [key, reporting] of directByContest) result[key] = reporting;
+  return result;
+}
+
+function reportingRecord(reportedValue, totalValue) {
+  const total = Math.max(0, parseInteger(totalValue));
+  const reported = Math.min(total, Math.max(0, parseInteger(reportedValue)));
+  return {
+    reported,
+    total,
+    percentage: percent(reported, total),
+    outstanding: Math.max(0, total - reported),
+    label: "Precincts reporting in this race",
+  };
+}
+
+function contestTitle(row) {
+  return String(rowValue(row, ["Contest Title", "Contest Name", "Race Title", "Office Title"]) || "").trim();
+}
+
+function precinctKey(row) {
+  const value = rowValue(row, [
+    "Election District", "Election District ID", "Election District Number",
+    "Precinct", "Precinct ID", "Precinct Number", "ED", "ED ID", "Voting District",
+  ]);
+  return value == null ? "" : String(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function reportedStatus(row) {
+  const value = rowValue(row, [
+    "Reported", "Is Reported", "District Reported", "Reporting Status",
+    "Results Reported", "Has Reported", "Report Status",
+  ]);
+  if (value == null || value === "") return null;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value > 0;
+  const text = String(value).trim().toLowerCase();
+  if (/^(?:0|n|no|false|not reported|unreported|outstanding|pending)$/.test(text)) return false;
+  if (/^(?:1|y|yes|true|reported|complete|completed)$/.test(text)) return true;
+  if (/not\s+reported|unreported|outstanding|pending/.test(text)) return false;
+  if (/reported|complete/.test(text)) return true;
+  return null;
+}
+
+function rowHasVotes(row) {
+  return rowNumber(row, ["Total Votes", "Votes", "Machine Votes", "Election Day Votes"])
+    + rowNumber(row, ["Absentee Votes"])
+    + rowNumber(row, ["Early Voting Votes"]) > 0;
+}
+
+function rowNumber(row, aliases) {
+  return parseInteger(rowValue(row, aliases) ?? 0);
+}
+
+function rowValue(row, aliases) {
+  const wanted = new Set(aliases.map(normalizedField));
+  for (const [key, value] of Object.entries(row)) {
+    if (wanted.has(normalizedField(key))) return value;
+  }
+  return undefined;
+}
+
+function normalizedField(value) {
+  return String(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function contestLookupKey(value) {
+  return slug(String(value).replace(/^U\.?\s*S\.?\s+Representative In Congress$/i, "Representative in Congress"));
+}
+
+function isStatewideContest(title) {
+  return /^(?:U\.?\s*S\.?\s+Senator|(?:U\.?\s*S\.?\s+)?Representative in Congress|Attorney General|Auditor of Accounts|State Treasurer)$/i.test(title);
 }
 
 export function parseResultsPayload(payload, sourceUrl = DEFAULT_SOURCE) {
