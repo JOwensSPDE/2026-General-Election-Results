@@ -9,7 +9,7 @@ A responsive election-night results page and Cloudflare Worker for Delaware's No
 - 90 face-centered 400×400 headshots prepared from the supplied source images.
 - Democratic, Republican and independent candidates are color-coded within each race.
 - Candidates are alphabetical by last name before results arrive, then reorder by vote total as each race begins reporting; tied candidates remain alphabetical.
-- Statewide election-district reporting, automatic updates and a manual refresh button.
+- Statewide and race-specific precinct reporting, including the number still outstanding in every race widget.
 - A Cloudflare scheduled Worker that requests Delaware's source once per minute and serves all readers from KV.
 - Responsive desktop/mobile layouts and iframe-aware jump links.
 
@@ -47,13 +47,23 @@ delaware-general-results-2026
 
 It reuses the existing `RESULTS_CACHE` KV namespace safely because the general-election cache keys are different from the primary-election keys.
 
-The expected Delaware source is:
+The expected Delaware public-results page is:
 
 ```text
 https://elections.delaware.gov/results/enr/GE2026.html?group=Statewide&filter=
 ```
 
 Delaware may not publish that page until closer to Election Day. Once the official URL appears, compare it with `worker/wrangler.toml` and update `RESULTS_SOURCE_URL` if necessary.
+
+The Worker derives and requests three official JSON feeds from that URL:
+
+```text
+Election_StatewideResults_ID_GE2026.json
+Election_DistrictReporting_ID_GE2026.json
+Election_ByElectionDistrict_ID_GE2026.json
+```
+
+The statewide feed supplies the vote totals. The other two feeds are joined by election district and contest to calculate the reported, total and outstanding precinct counts for each race. If either auxiliary feed is unavailable temporarily, vote totals continue updating and affected cards display “Awaiting precinct data” instead of a misleading statewide percentage.
 
 Deploy from the project folder:
 
@@ -111,6 +121,6 @@ Replace `YOUR-GITHUB-PAGES-URL` with the published page address:
 ## Election-night checks
 
 1. After 7:45 p.m., `/api/health` should show `cacheReady: true`, a recent `lastSuccessAt`, and `lastError: null`.
-2. `/api/results` should contain `reporting`, `contests`, `sourceUpdatedAt`, and `stale: false`.
+2. `/api/results` should contain `reporting`, `contests`, `sourceUpdatedAt`, and `stale: false`. Each contest should also contain its own `reporting` object once the auxiliary feeds are available.
 3. After 8 p.m., compare several totals on the public page with Delaware's official page.
 4. Do not describe the reporting percentage as ballots counted; it is the percentage of election districts reporting.
