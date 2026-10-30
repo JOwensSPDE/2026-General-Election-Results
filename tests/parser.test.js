@@ -1,9 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker, {
+  attachRaceReporting,
   parseResultsHtml,
   parseResultsJson,
   parseResultsPayload,
+  parseRaceReporting,
+  reportingDataUrls,
   resultsDataUrl,
   shouldRefreshAt,
 } from "../worker/src/index.js";
@@ -66,6 +69,20 @@ const jsonFixture = [
   },
 ];
 
+const districtReportingFixture = [
+  { "Election District": "01-01", "Reporting Status": "Reported" },
+  { "Election District": "01-02", "Reporting Status": "Not Reported" },
+  { "Election District": "02-01", "Reporting Status": "Yes" },
+];
+
+const byElectionDistrictFixture = [
+  { "Contest Title": "U.S. Senator", "Election District": "01-01", "Candidate Name": "JANE DOE", "Total Votes": 12 },
+  { "Contest Title": "U.S. Senator", "Election District": "01-02", "Candidate Name": "JANE DOE", "Total Votes": 0 },
+  { "Contest Title": "U.S. Senator", "Election District": "02-01", "Candidate Name": "JANE DOE", "Total Votes": 8 },
+  { "Contest Title": "State Representative District 1", "Election District": "01-01", "Candidate Name": "ALPHA", "Total Votes": 9 },
+  { "Contest Title": "State Representative District 1", "Election District": "01-02", "Candidate Name": "ALPHA", "Total Votes": 0 },
+];
+
 test("parses statewide contests, parties, totals and reporting", () => {
   const result = parseResultsHtml(fixture, "https://example.com/results");
   assert.equal(result.sourceUpdatedAt, "09/15/2026 20:44:52");
@@ -89,6 +106,43 @@ test("derives Delaware's statewide JSON feed from the public results page", () =
     resultsDataUrl("https://elections.delaware.gov/results/enr/GE2026.html?group=Statewide&filter="),
     "https://elections.delaware.gov/results/enr/Election_StatewideResults_ID_GE2026.json",
   );
+});
+
+test("derives Delaware's race-reporting feeds from the public results page", () => {
+  assert.deepEqual(
+    reportingDataUrls("https://elections.delaware.gov/results/enr/GE2026.html?group=Statewide&filter="),
+    {
+      districtReporting: "https://elections.delaware.gov/results/enr/Election_DistrictReporting_ID_GE2026.json",
+      byElectionDistrict: "https://elections.delaware.gov/results/enr/Election_ByElectionDistrict_ID_GE2026.json",
+    },
+  );
+});
+
+test("calculates reporting and outstanding precincts for each race", () => {
+  const reporting = parseRaceReporting(byElectionDistrictFixture, districtReportingFixture);
+  assert.deepEqual(reporting["u-s-senator"], {
+    reported: 2,
+    total: 3,
+    percentage: 66.67,
+    outstanding: 1,
+    label: "Precincts reporting in this race",
+  });
+  assert.deepEqual(reporting["state-representative-district-1"], {
+    reported: 1,
+    total: 2,
+    percentage: 50,
+    outstanding: 1,
+    label: "Precincts reporting in this race",
+  });
+});
+
+test("attaches race reporting to official statewide contest results", () => {
+  const parsed = parseResultsJson(jsonFixture, "https://example.com/public-results");
+  const result = attachRaceReporting(parsed, byElectionDistrictFixture, districtReportingFixture);
+  assert.equal(result.raceReportingAvailable, true);
+  assert.equal(result.contests[0].reporting.reported, 2);
+  assert.equal(result.contests[0].reporting.total, 3);
+  assert.equal(result.contests[0].reporting.outstanding, 1);
 });
 
 test("parses Delaware's official statewide JSON format", () => {
@@ -138,6 +192,48 @@ test("scheduled refresh stores parsed results in KV", async () => {
   assert.equal(stored.contests[0].candidates[0].votes, 1500);
   assert.equal(status.lastError, null);
   assert.equal(status.consecutiveFailures, 0);
+});
+
+test("scheduled refresh joins the official district feeds into each contest", async () => {
+  const kv = createKv();
+  const originalFetch = globalThis.fetch;
+  const requested = [];
+  globalThis.fetch = async input => {
+    const url = String(input);
+    requested.push(url);
+    if (url.includes("Election_StatewideResults_ID")) {
+      return new Response(JSON.stringify(jsonFixture), { status: 200 });
+    }
+    if (url.includes("Election_DistrictReporting_ID")) {
+      return new Response(JSON.stringify(districtReportingFixture), { status: 200 });
+    }
+    if (url.includes("Election_ByElectionDistrict_ID")) {
+      return new Response(JSON.stringify(byElectionDistrictFixture), { status: 200 });
+    }
+    return new Response("Not found", { status: 404 });
+  };
+  let scheduledWork;
+
+  try {
+    worker.scheduled(
+      { scheduledTime: Date.parse("2026-11-04T01:01:00Z") },
+      {
+        RESULTS_CACHE: kv,
+        RESULTS_SOURCE_URL: "https://elections.delaware.gov/results/enr/GE2026.html?group=Statewide&filter=",
+      },
+      { waitUntil(promise) { scheduledWork = promise; } },
+    );
+    await scheduledWork;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const stored = await kv.get("delaware-general-results-2026:last-good", "json");
+  assert.equal(requested.length, 3);
+  assert.equal(stored.contests[0].reporting.reported, 2);
+  assert.equal(stored.contests[0].reporting.total, 3);
+  assert.equal(stored.contests[0].reporting.outstanding, 1);
+  assert.equal(stored.raceReportingAvailable, true);
 });
 
 test("reader requests use KV without fetching the Delaware source", async () => {
