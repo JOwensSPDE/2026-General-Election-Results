@@ -1,8 +1,15 @@
 const DEFAULT_SOURCE = "https://elections.delaware.gov/results/enr/GE2026.html?group=Statewide&filter=";
 const CACHE_KEY = "delaware-general-results-2026:last-good";
 const STATUS_KEY = "delaware-general-results-2026:refresh-status";
+const BALANCE_CACHE_KEY = "delaware-general-results-2026:civicapi-balance:last-good";
+const BALANCE_STATUS_KEY = "delaware-general-results-2026:civicapi-balance:refresh-status";
 const DEFAULT_REFRESH_START = "2026-11-03T19:45:00-05:00";
 const DEFAULT_REFRESH_END = "2026-11-04T08:00:00-05:00";
+const DEFAULT_BALANCE_REFRESH_START = "2026-11-03T19:00:00-05:00";
+const DEFAULT_BALANCE_REFRESH_END = "2026-11-04T08:00:00-05:00";
+const CIVICAPI_SEARCH_ENDPOINT = "https://civicapi.org/api/v2/race/search";
+const CIVICAPI_RESULTS_URL = "https://civicapi.org/results";
+const SENATE_HOLDOVERS = { democratic: 34, republican: 31 };
 const STATEWIDE_FEED = "Election_StatewideResults_ID";
 const DISTRICT_REPORTING_FEED = "Election_DistrictReporting_ID";
 const BY_ELECTION_DISTRICT_FEED = "Election_ByElectionDistrict_ID";
@@ -26,7 +33,12 @@ export default {
     }
 
     if (url.pathname === "/api/health") {
-      const [latest, refreshStatus] = await Promise.all([readLastGood(env), readRefreshStatus(env)]);
+      const [latest, refreshStatus, balance, balanceStatus] = await Promise.all([
+        readLastGood(env),
+        readRefreshStatus(env),
+        readBalanceLastGood(env),
+        readBalanceRefreshStatus(env),
+      ]);
       return apiResponse({
         ok: true,
         service: "Delaware General Results 2026",
@@ -38,7 +50,23 @@ export default {
           startsAt: env.REFRESH_WINDOW_START || DEFAULT_REFRESH_START,
           endsAt: env.REFRESH_WINDOW_END || DEFAULT_REFRESH_END,
         },
+        balanceOfPower: {
+          configured: env.CIVICAPI_BALANCE_ENABLED !== "false",
+          provider: "civicAPI",
+          cacheReady: Boolean(balance),
+          lastSuccessAt: balanceStatus?.lastSuccessAt || balance?.fetchedAt || null,
+          lastAttemptAt: balanceStatus?.lastAttemptAt || null,
+          lastError: balanceStatus?.lastError || null,
+          refreshWindow: {
+            startsAt: env.BALANCE_REFRESH_WINDOW_START || DEFAULT_BALANCE_REFRESH_START,
+            endsAt: env.BALANCE_REFRESH_WINDOW_END || DEFAULT_BALANCE_REFRESH_END,
+          },
+        },
       }, 200, origin, { "cache-control": "no-store" });
+    }
+
+    if (url.pathname === "/api/balance") {
+      return serveBalanceOfPower(env, origin);
     }
 
     if (url.pathname !== "/api/results") {
@@ -82,8 +110,10 @@ export default {
 
   scheduled(controller, env, ctx) {
     const scheduledTime = controller?.scheduledTime ?? Date.now();
-    if (!shouldRefreshAt(scheduledTime, env)) return;
-    ctx.waitUntil(refreshResults(env));
+    const work = [];
+    if (shouldRefreshAt(scheduledTime, env)) work.push(refreshResults(env));
+    if (env.CIVICAPI_BALANCE_ENABLED !== "false" && shouldRefreshBalanceAt(scheduledTime, env)) work.push(refreshBalanceOfPower(env));
+    if (work.length) ctx.waitUntil(Promise.all(work));
   },
 };
 
@@ -93,6 +123,56 @@ export function shouldRefreshAt(timestamp, env = {}) {
   const endsAt = Date.parse(env.REFRESH_WINDOW_END || DEFAULT_REFRESH_END);
   return Number.isFinite(time) && Number.isFinite(startsAt) && Number.isFinite(endsAt)
     && time >= startsAt && time < endsAt;
+}
+
+export function shouldRefreshBalanceAt(timestamp, env = {}) {
+  const time = typeof timestamp === "number" ? timestamp : Date.parse(timestamp);
+  const startsAt = Date.parse(env.BALANCE_REFRESH_WINDOW_START || DEFAULT_BALANCE_REFRESH_START);
+  const endsAt = Date.parse(env.BALANCE_REFRESH_WINDOW_END || DEFAULT_BALANCE_REFRESH_END);
+  return Number.isFinite(time) && Number.isFinite(startsAt) && Number.isFinite(endsAt)
+    && time >= startsAt && time < endsAt;
+}
+
+async function serveBalanceOfPower(env, origin) {
+  if (!env.RESULTS_CACHE?.get) {
+    return apiResponse({ error: "Results cache is not configured." }, 503, origin, { "cache-control": "no-store" });
+  }
+
+  const [latest, refreshStatus] = await Promise.all([readBalanceLastGood(env), readBalanceRefreshStatus(env)]);
+  if (!latest) {
+    return apiResponse(initialBalanceState(), 200, origin, { "cache-control": "public, max-age=15, s-maxage=30" });
+  }
+
+  const staleAfterSeconds = clampNumber(env.BALANCE_STALE_AFTER_SECONDS, 180, 60, 3600);
+  const lastSuccessAt = refreshStatus?.lastSuccessAt || latest.fetchedAt;
+  const lastSuccessMs = Date.parse(lastSuccessAt || "");
+  const stale = shouldRefreshBalanceAt(Date.now(), env) && (!Number.isFinite(lastSuccessMs)
+    || Date.now() - lastSuccessMs > staleAfterSeconds * 1000);
+  const ttl = clampNumber(env.CACHE_SECONDS, 15, 5, 60);
+
+  return apiResponse({
+    ...latest,
+    stale,
+    checkedAt: lastSuccessAt || null,
+  }, 200, origin, {
+    "x-balance-cache": stale ? "stale-kv" : "kv",
+    "cache-control": `public, max-age=5, s-maxage=${ttl}, stale-while-revalidate=120`,
+  });
+}
+
+function initialBalanceState() {
+  return {
+    status: "waiting",
+    source: "civicAPI",
+    sourceUpdatedAt: null,
+    fetchedAt: null,
+    stale: false,
+    sourceUrls: { senate: CIVICAPI_RESULTS_URL, house: CIVICAPI_RESULTS_URL },
+    chambers: {
+      senate: balanceChamber(0, 0, 0, 100, 51),
+      house: balanceChamber(0, 0, 0, 435, 218),
+    },
+  };
 }
 
 async function refreshResults(env) {
@@ -158,6 +238,222 @@ async function refreshResults(env) {
     });
     console.error("Scheduled Delaware results refresh failed:", safeError(error));
   }
+}
+
+async function refreshBalanceOfPower(env) {
+  if (!env.RESULTS_CACHE?.put) throw new Error("RESULTS_CACHE KV binding is required for civicAPI balance refreshes.");
+
+  const previous = await readBalanceRefreshStatus(env);
+  const now = new Date();
+  const attemptAt = now.toISOString();
+  const nextAttemptMs = Date.parse(previous?.nextAttemptAt || "");
+  if (Number.isFinite(nextAttemptMs) && nextAttemptMs > now.getTime()) return;
+
+  try {
+    const requestInit = {
+      headers: {
+        "accept": "application/json",
+        "user-agent": "Spotlight Delaware election-results monitor/1.5 (+https://spotlightdelaware.org)",
+      },
+      cf: { cacheTtl: 0, cacheEverything: false },
+    };
+    const [senateResponse, houseResponse] = await Promise.all([
+      fetch(civicApiSearchUrl("senate", env), requestInit),
+      fetch(civicApiSearchUrl("house", env), requestInit),
+    ]);
+    if (!senateResponse.ok || !houseResponse.ok) {
+      const status = !senateResponse.ok ? senateResponse.status : houseResponse.status;
+      const error = new Error(`civicAPI results feed returned HTTP ${status}`);
+      error.status = status;
+      throw error;
+    }
+
+    const [senatePayload, housePayload] = await Promise.all([senateResponse.json(), houseResponse.json()]);
+    const senate = parseCivicApiBalance(senatePayload, "senate");
+    const house = parseCivicApiBalance(housePayload, "house");
+    const sourceUpdatedAt = newestTimestamp(senate.sourceUpdatedAt, house.sourceUpdatedAt);
+    const body = {
+      status: "live",
+      source: "civicAPI",
+      sourceUpdatedAt,
+      fetchedAt: attemptAt,
+      stale: false,
+      sourceUrls: { senate: CIVICAPI_RESULTS_URL, house: CIVICAPI_RESULTS_URL },
+      chambers: { senate: senate.chamber, house: house.chamber },
+    };
+
+    await Promise.all([
+      writeBalanceLastGood(env, body),
+      writeBalanceRefreshStatus(env, {
+        lastAttemptAt: attemptAt,
+        lastSuccessAt: attemptAt,
+        lastError: null,
+        nextAttemptAt: null,
+        consecutiveFailures: 0,
+      }),
+    ]);
+  } catch (error) {
+    const consecutiveFailures = (previous?.consecutiveFailures || 0) + 1;
+    const backoffSeconds = retryDelaySeconds(error, consecutiveFailures);
+    await writeBalanceRefreshStatus(env, {
+      ...previous,
+      lastAttemptAt: attemptAt,
+      lastError: safeError(error),
+      nextAttemptAt: new Date(now.getTime() + backoffSeconds * 1000).toISOString(),
+      consecutiveFailures,
+    });
+    console.error("Scheduled civicAPI balance refresh failed:", safeError(error));
+  }
+}
+
+export function civicApiSearchUrl(chamberId, env = {}) {
+  const chamber = chamberId === "senate" ? "senate" : "house";
+  const url = new URL(env.CIVICAPI_SEARCH_URL || CIVICAPI_SEARCH_ENDPOINT);
+  url.searchParams.set("country", "US");
+  url.searchParams.set("start_date", "2026-11-03");
+  url.searchParams.set("end_date", "2026-11-03");
+  url.searchParams.set("election_type", chamber);
+  url.searchParams.set("limit", "1000");
+  return url.toString();
+}
+
+export function parseCivicApiBalance(input, chamberId) {
+  const races = civicApiRaces(input);
+  if (!races.length) throw new Error(`civicAPI ${chamberId} response did not include any races.`);
+
+  const usableRaces = chamberId === "house" ? uniqueVotingHouseRaces(races) : uniqueRaces(races);
+  let democraticCalls = 0;
+  let republicanCalls = 0;
+  let otherCalls = 0;
+  const timestamps = [];
+
+  for (const race of usableRaces) {
+    const updated = race?.last_updated || race?.lastUpdated || race?.updated_at || race?.updatedAt;
+    if (updated) timestamps.push(updated);
+    const candidates = asArray(race?.candidates || race?.candidate_results || race?.candidateResults);
+    const winner = candidates.find(candidate => civicWinner(candidate?.winner || candidate?.is_winner || candidate?.isWinner));
+    if (!winner) continue;
+    const party = civicParty(winner?.party || winner?.party_name || winner?.partyName || winner?.party_code || winner?.partyCode);
+    if (party === "democratic") democraticCalls += 1;
+    else if (party === "republican") republicanCalls += 1;
+    else otherCalls += 1;
+  }
+
+  const totalSeats = chamberId === "senate" ? 100 : 435;
+  const majority = chamberId === "senate" ? 51 : 218;
+  const democratic = democraticCalls + (chamberId === "senate" ? SENATE_HOLDOVERS.democratic : 0);
+  const republican = republicanCalls + (chamberId === "senate" ? SENATE_HOLDOVERS.republican : 0);
+  const other = otherCalls;
+  if (democratic + republican + other > totalSeats) {
+    throw new Error(`civicAPI ${chamberId} response contained more called seats than the chamber total.`);
+  }
+
+  return {
+    sourceUpdatedAt: newestTimestamp(...timestamps),
+    chamber: balanceChamber(democratic, republican, other, totalSeats, majority),
+  };
+}
+
+function balanceChamber(democratic, republican, other, total, majority) {
+  const assigned = Math.max(0, democratic) + Math.max(0, republican) + Math.max(0, other);
+  return {
+    democratic: Math.max(0, democratic),
+    republican: Math.max(0, republican),
+    other: Math.max(0, other),
+    uncalled: Math.max(0, total - assigned),
+    total,
+    majority,
+  };
+}
+
+function civicApiRaces(input) {
+  if (Array.isArray(input)) return input;
+  if (!input || typeof input !== "object") return [];
+  for (const key of ["races", "results", "items"]) {
+    if (Array.isArray(input[key])) return input[key];
+  }
+  if (Array.isArray(input.data)) return input.data;
+  if (input.data && typeof input.data === "object") return civicApiRaces(input.data);
+  return [];
+}
+
+function uniqueRaces(races) {
+  const seen = new Set();
+  return races.filter((race, index) => {
+    const key = String(race?.race_id || race?.raceId || race?.id || `${raceName(race)}-${index}`);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function uniqueVotingHouseRaces(races) {
+  const seats = new Map();
+  for (const race of uniqueRaces(races)) {
+    if (!isVotingHouseRace(race)) continue;
+    const key = houseSeatKey(race);
+    const current = seats.get(key);
+    if (!current || (isSpecialElection(current) && !isSpecialElection(race))) seats.set(key, race);
+  }
+  return [...seats.values()];
+}
+
+function isVotingHouseRace(race) {
+  const details = race?.district_details || race?.districtDetails || {};
+  const jurisdiction = String(
+    race?.province || race?.state || race?.state_code || race?.stateCode
+      || details?.province || details?.state || details?.state_code || details?.stateCode || "",
+  ).trim().toUpperCase();
+  if (["AS", "DC", "GU", "MP", "PR", "VI"].includes(jurisdiction)) return false;
+  return !/delegate|resident commissioner/i.test(`${raceName(race)} ${districtName(race)}`);
+}
+
+function houseSeatKey(race) {
+  const details = race?.district_details || race?.districtDetails || {};
+  const jurisdiction = String(race?.province || race?.state || race?.state_code || race?.stateCode
+    || details?.province || details?.state || details?.state_code || details?.stateCode || "").trim().toLowerCase();
+  const district = districtName(race).toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return jurisdiction || district ? `${jurisdiction}:${district}` : String(race?.race_id || race?.raceId || race?.id || raceName(race));
+}
+
+function districtName(race) {
+  const details = race?.district_details || race?.districtDetails || {};
+  return String(race?.district || race?.district_name || race?.districtName || details?.district_name || details?.districtName || "");
+}
+
+function raceName(race) {
+  const name = race?.election_name || race?.electionName || race?.name || race?.title || "";
+  if (typeof name === "string") return name;
+  return String(name?.en_US || name?.en || Object.values(name || {})[0] || "");
+}
+
+function isSpecialElection(race) {
+  return /\bspecial\b/i.test(raceName(race));
+}
+
+function civicWinner(value) {
+  if (value === true || value === 1) return true;
+  return /^(?:1|true|yes|y|x|called|winner)$/i.test(String(value || "").trim());
+}
+
+function civicParty(value) {
+  const raw = typeof value === "object"
+    ? value?.abbreviation || value?.abbr || value?.code || value?.name || ""
+    : value;
+  const party = String(raw || "").trim().toLowerCase();
+  if (/^(?:d|dem)$/.test(party) || /democrat|democratic|dfl/.test(party)) return "democratic";
+  if (/^(?:r|rep|gop)$/.test(party) || /republican/.test(party)) return "republican";
+  return "other";
+}
+
+function asArray(value) {
+  if (Array.isArray(value)) return value;
+  return value && typeof value === "object" ? [value] : [];
+}
+
+function newestTimestamp(...values) {
+  const valid = values.filter(Boolean).sort((a, b) => Date.parse(b) - Date.parse(a));
+  return valid[0] || null;
 }
 
 function retryDelaySeconds(error, failures) {
@@ -605,6 +901,26 @@ async function writeRefreshStatus(env, body) {
 async function readRefreshStatus(env) {
   if (!env.RESULTS_CACHE?.get) return null;
   return env.RESULTS_CACHE.get(STATUS_KEY, "json");
+}
+
+async function writeBalanceLastGood(env, body) {
+  if (!env.RESULTS_CACHE?.put) return;
+  await env.RESULTS_CACHE.put(BALANCE_CACHE_KEY, JSON.stringify(body));
+}
+
+async function readBalanceLastGood(env) {
+  if (!env.RESULTS_CACHE?.get) return null;
+  return env.RESULTS_CACHE.get(BALANCE_CACHE_KEY, "json");
+}
+
+async function writeBalanceRefreshStatus(env, body) {
+  if (!env.RESULTS_CACHE?.put) return;
+  await env.RESULTS_CACHE.put(BALANCE_STATUS_KEY, JSON.stringify(body), { expirationTtl: 604800 });
+}
+
+async function readBalanceRefreshStatus(env) {
+  if (!env.RESULTS_CACHE?.get) return null;
+  return env.RESULTS_CACHE.get(BALANCE_STATUS_KEY, "json");
 }
 
 function safeError(error) {
