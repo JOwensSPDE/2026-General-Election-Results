@@ -10,6 +10,7 @@ A responsive election-night results page and Cloudflare Worker for Delaware's No
 - Democratic, Republican and independent candidates are color-coded within each race.
 - Candidates are alphabetical by last name before results arrive, then reorder by vote total as each race begins reporting; tied candidates remain alphabetical.
 - Statewide and race-specific precinct reporting, including the number still outstanding in every race widget.
+- U.S. Senate and House balance-of-power bars powered by civicAPI race calls, with no paid API key required.
 - A Cloudflare scheduled Worker that requests Delaware's source once per minute and serves all readers from KV.
 - Responsive desktop/mobile layouts and iframe-aware jump links.
 
@@ -71,7 +72,19 @@ Deploy from the project folder:
 npm.cmd run worker:deploy
 ```
 
-The two UTC cron schedules cover 7:45 p.m. Nov. 3 through 7:59 a.m. Nov. 4 Eastern time. The page begins reading the cached Worker response at 8 p.m. Eastern and polls it every 20 seconds.
+The UTC cron schedule covers 7 p.m. Nov. 3 through 7:59 a.m. Nov. 4 Eastern time. civicAPI balance updates begin at 7 p.m.; Delaware source updates begin at 7:45 p.m. The page begins reading Delaware's cached results at 8 p.m. and polls every 20 seconds. It polls the separate national balance endpoint every 30 seconds.
+
+### civicAPI balance-of-power feed
+
+The national bars use civicAPI's free, public race-search endpoints. No registration, paid subscription, API key or Worker secret is required. civicAPI requires attribution for newsroom and commercial uses, so the provider is named and linked above both bars.
+
+Deploy the Worker normally:
+
+```powershell
+npm.cmd run worker:deploy
+```
+
+The Worker requests civicAPI's U.S. Senate and House race inventories once per minute, stores the parsed totals in KV, and serves readers from `/api/balance`. Senate totals combine civicAPI-called winners with 65 holdover seats; the two independent holdovers are counted with Democrats because they caucus with them. House totals include civicAPI-called winners from the 435 voting seats. Delegates and resident commissioners are excluded. Uncalled seats remain gray, and candidates who are merely leading are intentionally excluded.
 
 After deployment, confirm that this address works:
 
@@ -120,7 +133,9 @@ Replace `YOUR-GITHUB-PAGES-URL` with the published page address:
 
 ## Election-night checks
 
-1. After 7:45 p.m., `/api/health` should show `cacheReady: true`, a recent `lastSuccessAt`, and `lastError: null`.
-2. `/api/results` should contain `reporting`, `contests`, `sourceUpdatedAt`, and `stale: false`. Each contest should also contain its own `reporting` object once the auxiliary feeds are available.
-3. After 8 p.m., compare several totals on the public page with Delaware's official page.
-4. Do not describe the reporting percentage as ballots counted; it is the percentage of election districts reporting.
+1. After 7 p.m., `/api/health` should show `balanceOfPower.provider: "civicAPI"`, `balanceOfPower.cacheReady: true`, a recent balance `lastSuccessAt`, and no balance `lastError`.
+2. `/api/balance` should contain `chambers.senate`, `chambers.house`, `sourceUpdatedAt`, and `stale: false`. Compare several called races with civicAPI's results page.
+3. After 7:45 p.m., `/api/health` should show `cacheReady: true`, a recent Delaware `lastSuccessAt`, and `lastError: null`.
+4. `/api/results` should contain `reporting`, `contests`, `sourceUpdatedAt`, and `stale: false`. Each contest should also contain its own `reporting` object once the auxiliary feeds are available.
+5. After 8 p.m., compare several totals on the public page with Delaware's official page.
+6. Do not describe the reporting percentage as ballots counted; it is the percentage of election districts reporting.
