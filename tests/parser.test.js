@@ -2,12 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import worker, {
   attachRaceReporting,
+  civicApiSearchUrl,
+  parseCivicApiBalance,
   parseResultsHtml,
   parseResultsJson,
   parseResultsPayload,
   parseRaceReporting,
   reportingDataUrls,
   resultsDataUrl,
+  shouldRefreshBalanceAt,
   shouldRefreshAt,
 } from "../worker/src/index.js";
 
@@ -82,6 +85,26 @@ const byElectionDistrictFixture = [
   { "Contest Title": "State Representative District 1", "Election District": "01-01", "Candidate Name": "ALPHA", "Total Votes": 9 },
   { "Contest Title": "State Representative District 1", "Election District": "01-02", "Candidate Name": "ALPHA", "Total Votes": 0 },
 ];
+
+const senateCivicFixture = {
+  results: [
+    { race_id: 101, last_updated: "2026-11-04T02:15:00Z", candidates: [{ name: "A", party: "DEM", winner: true }] },
+    { race_id: 102, last_updated: "2026-11-04T02:15:20Z", candidates: [{ name: "B", party: { abbreviation: "GOP" }, winner: 1 }] },
+    { race_id: 103, last_updated: "2026-11-04T02:15:10Z", candidates: [{ name: "C", party: "IND", winner: false }] },
+  ],
+};
+
+const houseCivicFixture = {
+  data: {
+    races: [
+      { race_id: 201, province: "NY", district: "1", election_name: "New York US House 1", last_updated: "2026-11-04T02:15:30Z", candidates: [{ name: "A", party: "Democratic", winner: true }] },
+      { race_id: 202, province: "TX", district: "2", election_name: "Texas US House 2", last_updated: "2026-11-04T02:15:40Z", candidates: [{ name: "B", party: "Republican", winner: "yes" }] },
+      { race_id: 203, province: "DC", district: "At-large", election_name: "District of Columbia Delegate", candidates: [{ name: "C", party: "DEM", winner: true }] },
+      { race_id: 204, province: "AZ", district: "7", election_name: "Arizona US House 7 Special", candidates: [{ name: "D", party: "DEM", winner: true }] },
+      { race_id: 205, province: "AZ", district: "7", election_name: "Arizona US House 7", candidates: [{ name: "E", party: "GOP", winner: true }] },
+    ],
+  },
+};
 
 test("parses statewide contests, parties, totals and reporting", () => {
   const result = parseResultsHtml(fixture, "https://example.com/results");
@@ -169,6 +192,80 @@ test("refresh window uses the configured Delaware election-night interval", () =
   assert.equal(shouldRefreshAt("2026-11-04T08:00:00-05:00"), false);
 });
 
+test("national balance refresh starts at 7 p.m. Eastern", () => {
+  assert.equal(shouldRefreshBalanceAt("2026-11-03T18:59:59-05:00"), false);
+  assert.equal(shouldRefreshBalanceAt("2026-11-03T19:00:00-05:00"), true);
+  assert.equal(shouldRefreshBalanceAt("2026-11-04T07:59:59-05:00"), true);
+  assert.equal(shouldRefreshBalanceAt("2026-11-04T08:00:00-05:00"), false);
+});
+
+test("builds civicAPI Senate and House search requests", () => {
+  const senate = new URL(civicApiSearchUrl("senate"));
+  const house = new URL(civicApiSearchUrl("house"));
+  assert.equal(senate.origin + senate.pathname, "https://civicapi.org/api/v2/race/search");
+  assert.equal(senate.searchParams.get("country"), "US");
+  assert.equal(senate.searchParams.get("start_date"), "2026-11-03");
+  assert.equal(senate.searchParams.get("end_date"), "2026-11-03");
+  assert.equal(senate.searchParams.get("election_type"), "senate");
+  assert.equal(house.searchParams.get("election_type"), "house");
+  assert.equal(house.searchParams.get("limit"), "1000");
+});
+
+test("parses civicAPI calls, Senate holdovers and voting House seats", () => {
+  const senate = parseCivicApiBalance(senateCivicFixture, "senate");
+  assert.deepEqual(senate.chamber, {
+    democratic: 35,
+    republican: 32,
+    other: 0,
+    uncalled: 33,
+    total: 100,
+    majority: 51,
+  });
+  assert.equal(senate.sourceUpdatedAt, "2026-11-04T02:15:20Z");
+
+  const house = parseCivicApiBalance(houseCivicFixture, "house");
+  assert.deepEqual(house.chamber, {
+    democratic: 1,
+    republican: 2,
+    other: 0,
+    uncalled: 432,
+    total: 435,
+    majority: 218,
+  });
+});
+
+test("scheduled civicAPI refresh caches balance totals without requesting Delaware before 7:45 p.m.", async () => {
+  const kv = createKv();
+  const originalFetch = globalThis.fetch;
+  const requested = [];
+  globalThis.fetch = async input => {
+    const url = String(input);
+    requested.push(url);
+    if (url.includes("election_type=senate")) return Response.json(senateCivicFixture);
+    if (url.includes("election_type=house")) return Response.json(houseCivicFixture);
+    return new Response("Not found", { status: 404 });
+  };
+  let scheduledWork;
+
+  try {
+    worker.scheduled(
+      { scheduledTime: Date.parse("2026-11-04T00:15:00Z") },
+      { RESULTS_CACHE: kv },
+      { waitUntil(promise) { scheduledWork = promise; } },
+    );
+    assert.ok(scheduledWork);
+    await scheduledWork;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const stored = await kv.get("delaware-general-results-2026:civicapi-balance:last-good", "json");
+  assert.equal(requested.length, 2);
+  assert.equal(stored.chambers.senate.democratic, 35);
+  assert.equal(stored.chambers.house.republican, 2);
+  assert.equal(stored.source, "civicAPI");
+});
+
 test("scheduled refresh stores parsed results in KV", async () => {
   const kv = createKv();
   const originalFetch = globalThis.fetch;
@@ -178,7 +275,7 @@ test("scheduled refresh stores parsed results in KV", async () => {
   try {
     worker.scheduled(
       { scheduledTime: Date.parse("2026-11-04T01:01:00Z") },
-      { RESULTS_CACHE: kv, RESULTS_SOURCE_URL: "https://example.com/results" },
+      { RESULTS_CACHE: kv, RESULTS_SOURCE_URL: "https://example.com/results", CIVICAPI_BALANCE_ENABLED: "false" },
       { waitUntil(promise) { scheduledWork = promise; } },
     );
     assert.ok(scheduledWork);
@@ -220,6 +317,7 @@ test("scheduled refresh joins the official district feeds into each contest", as
       {
         RESULTS_CACHE: kv,
         RESULTS_SOURCE_URL: "https://elections.delaware.gov/results/enr/GE2026.html?group=Statewide&filter=",
+        CIVICAPI_BALANCE_ENABLED: "false",
       },
       { waitUntil(promise) { scheduledWork = promise; } },
     );
