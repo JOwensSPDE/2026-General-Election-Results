@@ -3,6 +3,16 @@
   const seeds = window.SEED_CONTESTS || [];
   const headshots = window.CANDIDATE_HEADSHOTS || {};
   const demoMode = new URLSearchParams(location.search).get("demo") === "1";
+  const emptyBalance = {
+    status: "waiting",
+    source: "civicAPI",
+    sourceUpdatedAt: null,
+    fetchedAt: null,
+    chambers: {
+      senate: { democratic: 0, republican: 0, other: 0, uncalled: 100, total: 100, majority: 51 },
+      house: { democratic: 0, republican: 0, other: 0, uncalled: 435, total: 435, majority: 218 }
+    }
+  };
   const groups = [
     { id: "us-senate", title: "U.S. Senate", match: c => isTitle(c, "U.S. Senator") },
     { id: "us-house", title: "U.S. House", match: c => /Representative in Congress/i.test(c.title) },
@@ -25,7 +35,12 @@
     statewideMeter: document.querySelector("#statewide-meter"),
     statewideDetail: document.querySelector("#statewide-detail"),
     statewideStatus: document.querySelector("#statewide-status"),
-    source: document.querySelector("#source-link")
+    source: document.querySelector("#source-link"),
+    balanceStatus: document.querySelector("#balance-status"),
+    balance: {
+      senate: balanceElements("senate"),
+      house: balanceElements("house")
+    }
   };
 
   let state = {
@@ -37,19 +52,32 @@
     stale: false,
     live: false
   };
+  let balanceState = emptyBalance;
 
   buildNav();
   render();
-  els.refresh.addEventListener("click", () => refreshResults(true));
+  renderBalance();
+  els.refresh.addEventListener("click", refreshAll);
   if ("ResizeObserver" in window) new ResizeObserver(postHeight).observe(document.body);
   window.addEventListener("load", postHeight);
 
   if (demoMode) {
     state = demoState();
+    balanceState = demoBalanceState();
     showNotice("Demo mode is on. These vote totals are fictional and are shown only to preview the design.");
     render();
+    renderBalance();
   } else {
     schedulePolling();
+    scheduleBalancePolling();
+  }
+
+  async function refreshAll() {
+    els.refresh.disabled = true;
+    els.refresh.textContent = "Refreshing…";
+    await Promise.allSettled([refreshResults(true), refreshBalance(true)]);
+    els.refresh.disabled = false;
+    els.refresh.textContent = "Refresh now";
   }
 
   function schedulePolling() {
@@ -73,8 +101,6 @@
       return;
     }
 
-    els.refresh.disabled = true;
-    els.refresh.textContent = "Refreshing…";
     try {
       const response = await fetch(config.apiUrl, { cache: "no-store", headers: { accept: "application/json" } });
       const data = await response.json().catch(() => ({}));
@@ -91,9 +117,40 @@
     } catch (error) {
       showNotice(`Live results could not be refreshed. ${error.message} The last displayed update remains on screen.`, "error");
       if (manual) els.update.textContent = "Manual refresh failed; the prior update is still displayed.";
-    } finally {
-      els.refresh.disabled = false;
-      els.refresh.textContent = "Refresh now";
+    }
+  }
+
+  function scheduleBalancePolling() {
+    const starts = new Date(config.balancePollingStartsAt || "2026-11-03T19:00:00-05:00");
+    const now = new Date();
+    if (now >= starts) {
+      refreshBalance();
+      setInterval(refreshBalance, Math.max(15000, Number(config.balancePollIntervalMs) || 30000));
+      return;
+    }
+
+    const formatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "America/New_York" });
+    els.balanceStatus.textContent = `civicAPI updates begin ${formatter.format(starts)}.`;
+    const delay = Math.min(starts.getTime() - now.getTime(), 2147483647);
+    setTimeout(scheduleBalancePolling, delay);
+  }
+
+  async function refreshBalance(manual = false) {
+    if (!validApiUrl(config.balanceApiUrl)) {
+      els.balanceStatus.textContent = "National balance setup is incomplete.";
+      return;
+    }
+
+    try {
+      const response = await fetch(config.balanceApiUrl, { cache: "no-store", headers: { accept: "application/json" } });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `Balance service returned ${response.status}`);
+      if (!data.chambers?.senate || !data.chambers?.house) throw new Error("The civicAPI response did not include both chambers.");
+      balanceState = data;
+      renderBalance();
+    } catch (error) {
+      const suffix = manual ? " The last displayed civicAPI update remains on screen." : "";
+      els.balanceStatus.textContent = `civicAPI balance could not be refreshed.${suffix}`;
     }
   }
 
@@ -132,6 +189,46 @@
     els.groups.replaceChildren(...renderGroups(reporting));
     els.groups.setAttribute("aria-busy", "false");
     requestAnimationFrame(postHeight);
+  }
+
+  function renderBalance() {
+    renderChamberBalance("senate", balanceState.chambers?.senate || emptyBalance.chambers.senate);
+    renderChamberBalance("house", balanceState.chambers?.house || emptyBalance.chambers.house);
+
+    if (demoMode) {
+      els.balanceStatus.textContent = "Demo mode · fictional civicAPI-style totals";
+    } else if (balanceState.sourceUpdatedAt) {
+      els.balanceStatus.textContent = `civicAPI updated ${formatTime(balanceState.sourceUpdatedAt)}${balanceState.stale ? " · showing cached totals" : ""}`;
+    } else if (balanceState.status === "waiting") {
+      els.balanceStatus.textContent = "civicAPI updates begin at 7 p.m. ET.";
+    } else if (balanceState.fetchedAt) {
+      els.balanceStatus.textContent = `civicAPI checked ${formatTime(balanceState.fetchedAt)}`;
+    }
+    requestAnimationFrame(postHeight);
+  }
+
+  function renderChamberBalance(chamberId, chamber) {
+    const target = els.balance[chamberId];
+    const total = Math.max(1, Number(chamber.total) || (chamberId === "senate" ? 100 : 435));
+    const democratic = Math.max(0, Number(chamber.democratic) || 0);
+    const republican = Math.max(0, Number(chamber.republican) || 0);
+    const other = Math.max(0, Number(chamber.other) || 0);
+    const uncalled = Math.max(0, Number.isFinite(Number(chamber.uncalled)) ? Number(chamber.uncalled) : total - democratic - republican - other);
+    const accounted = Math.max(1, democratic + republican + other + uncalled);
+    const democraticWidth = Math.min(100, democratic / accounted * 100);
+    const republicanWidth = Math.min(100, republican / accounted * 100);
+    const centerWidth = Math.max(0, 100 - democraticWidth - republicanWidth);
+    const majority = Number(chamber.majority) || (chamberId === "senate" ? 51 : 218);
+
+    target.demCount.textContent = formatNumber(democratic);
+    target.repCount.textContent = formatNumber(republican);
+    target.demBar.style.width = `${democraticWidth}%`;
+    target.uncalledBar.style.width = `${centerWidth}%`;
+    target.repBar.style.width = `${republicanWidth}%`;
+    target.detail.textContent = other
+      ? `${formatNumber(uncalled)} uncalled · ${formatNumber(other)} other · ${formatNumber(total)} total seats`
+      : `${formatNumber(uncalled)} uncalled · ${formatNumber(total)} total seats`;
+    target.track.setAttribute("aria-label", `${chamberId === "senate" ? "U.S. Senate" : "U.S. House"} balance of power: Democrats ${democratic}, Republicans ${republican}, other ${other}, ${uncalled} not yet called; ${majority} seats for a majority.`);
   }
 
   function renderGroups(reporting) {
@@ -297,6 +394,20 @@
     };
   }
 
+  function demoBalanceState() {
+    return {
+      status: "demo",
+      source: "civicAPI",
+      sourceUpdatedAt: "2026-11-03T22:14:32-05:00",
+      fetchedAt: new Date().toISOString(),
+      stale: false,
+      chambers: {
+        senate: { democratic: 43, republican: 42, other: 0, uncalled: 15, total: 100, majority: 51 },
+        house: { democratic: 128, republican: 141, other: 0, uncalled: 166, total: 435, majority: 218 }
+      }
+    };
+  }
+
   function demoRaceReporting(title, index) {
     let total;
     if (/^(?:U\.S\. Senator|Representative in Congress|Attorney General|Auditor of Accounts|State Treasurer)$/i.test(title)) {
@@ -323,6 +434,18 @@
     els.notice.hidden = !message;
     els.notice.textContent = message;
     els.notice.className = `wrap notice${kind ? ` ${kind}` : ""}`;
+  }
+
+  function balanceElements(chamberId) {
+    return {
+      demCount: document.querySelector(`#${chamberId}-dem-count`),
+      repCount: document.querySelector(`#${chamberId}-rep-count`),
+      demBar: document.querySelector(`#${chamberId}-dem-bar`),
+      uncalledBar: document.querySelector(`#${chamberId}-uncalled-bar`),
+      repBar: document.querySelector(`#${chamberId}-rep-bar`),
+      detail: document.querySelector(`#${chamberId}-detail`),
+      track: document.querySelector(`#${chamberId}-track`)
+    };
   }
 
   function displayTitle(title) {

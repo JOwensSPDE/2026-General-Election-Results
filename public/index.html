@@ -51,6 +51,48 @@
     </nav>
 
     <div class="wrap notice" id="notice" hidden></div>
+
+    <section class="wrap balance-section" id="balance-of-power" aria-labelledby="balance-heading">
+      <div class="balance-heading-row">
+        <div>
+          <p class="balance-eyebrow">National results</p>
+          <h2 id="balance-heading">Balance of power</h2>
+        </div>
+        <p class="balance-status" id="balance-status" aria-live="polite">civicAPI updates begin at 7 p.m. ET.</p>
+      </div>
+
+      <div class="balance-card" data-chamber="senate">
+        <h3>U.S. Senate balance of power (<a href="https://civicapi.org/results" target="_blank" rel="noreferrer">civicAPI</a>)</h3>
+        <div class="balance-counts" aria-hidden="true">
+          <span>Democrats <strong id="senate-dem-count">0</strong></span>
+          <span>Republicans <strong id="senate-rep-count">0</strong></span>
+        </div>
+        <div class="balance-track" id="senate-track" role="img" aria-label="U.S. Senate balance of power: awaiting civicAPI race calls">
+          <span class="balance-fill dem" id="senate-dem-bar"></span>
+          <span class="balance-fill uncalled" id="senate-uncalled-bar"></span>
+          <span class="balance-fill rep" id="senate-rep-bar"></span>
+          <span class="balance-majority" aria-hidden="true"><span>51 for majority</span></span>
+        </div>
+        <p class="balance-detail" id="senate-detail">100 seats · awaiting civicAPI race calls</p>
+      </div>
+
+      <div class="balance-card" data-chamber="house">
+        <h3>U.S. House balance of power (<a href="https://civicapi.org/results" target="_blank" rel="noreferrer">civicAPI</a>)</h3>
+        <div class="balance-counts" aria-hidden="true">
+          <span>Democrats <strong id="house-dem-count">0</strong></span>
+          <span>Republicans <strong id="house-rep-count">0</strong></span>
+        </div>
+        <div class="balance-track" id="house-track" role="img" aria-label="U.S. House balance of power: awaiting civicAPI race calls">
+          <span class="balance-fill dem" id="house-dem-bar"></span>
+          <span class="balance-fill uncalled" id="house-uncalled-bar"></span>
+          <span class="balance-fill rep" id="house-rep-bar"></span>
+          <span class="balance-majority" aria-hidden="true"><span>218 for majority</span></span>
+        </div>
+        <p class="balance-detail" id="house-detail">435 seats · awaiting civicAPI race calls</p>
+      </div>
+
+      <p class="balance-note">Colored totals reflect civicAPI race calls. Senate totals also include seats not up for election and count independents with the party they caucus with.</p>
+    </section>
     <div class="wrap results-shell" id="race-groups" aria-busy="true"></div>
 
     <footer class="results-footer">
