@@ -194,15 +194,16 @@
   function renderBalance() {
     renderChamberBalance("senate", balanceState.chambers?.senate || emptyBalance.chambers.senate);
     renderChamberBalance("house", balanceState.chambers?.house || emptyBalance.chambers.house);
+    const sourceLabel = balanceState.source || "civicAPI";
 
     if (demoMode) {
       els.balanceStatus.textContent = "Demo mode · fictional civicAPI-style totals";
     } else if (balanceState.sourceUpdatedAt) {
-      els.balanceStatus.textContent = `civicAPI updated ${formatTime(balanceState.sourceUpdatedAt)}${balanceState.stale ? " · showing cached totals" : ""}`;
+      els.balanceStatus.textContent = `${sourceLabel} updated ${formatTime(balanceState.sourceUpdatedAt)}${balanceState.stale ? " · showing cached totals" : ""}`;
     } else if (balanceState.status === "waiting") {
       els.balanceStatus.textContent = "civicAPI updates begin at 7 p.m. ET.";
     } else if (balanceState.fetchedAt) {
-      els.balanceStatus.textContent = `civicAPI checked ${formatTime(balanceState.fetchedAt)}`;
+      els.balanceStatus.textContent = `${sourceLabel} checked ${formatTime(balanceState.fetchedAt)}`;
     }
     requestAnimationFrame(postHeight);
   }
