@@ -1,9 +1,10 @@
-# Election-results alignment hotfix v3
+# Election-results live-sync hotfix v4
 
 This version makes two corrections:
 
 - It counts only civicAPI-called House races, excluding unopposed seats, so the House totals align with civicAPI's map. Senate totals continue to include seats not up for election and independents who caucus with Democrats.
 - It no longer treats early or absentee votes as proof that a Delaware election-day precinct has reported. A precinct is counted only after machine votes appear or Delaware supplies an explicit reporting status.
+- It adds the same timestamp cache-buster used by Delaware's official results page, preventing the Worker from receiving a three-minute-old cached JSON response.
 
 Extract this ZIP into:
 
@@ -25,6 +26,8 @@ Set-Location $project
 npm.cmd test
 npm.cmd run worker:deploy
 ```
+
+The test command should report **21 passing tests**.
 
 After the deployment finishes, wait about one minute and run:
 
