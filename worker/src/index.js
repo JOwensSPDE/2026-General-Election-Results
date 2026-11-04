@@ -186,6 +186,7 @@ async function refreshResults(env) {
   const previous = await readRefreshStatus(env);
   const now = new Date();
   const attemptAt = now.toISOString();
+  const cacheBust = now.getTime();
   const nextAttemptMs = Date.parse(previous?.nextAttemptAt || "");
 
   if (Number.isFinite(nextAttemptMs) && nextAttemptMs > now.getTime()) return;
@@ -199,9 +200,9 @@ async function refreshResults(env) {
       cf: { cacheTtl: 0, cacheEverything: false },
     };
     const [upstream, districtReportingRows, electionDistrictRows] = await Promise.all([
-      fetch(dataUrl, requestInit),
-      fetchOptionalRows(auxiliaryUrls.districtReporting, requestInit),
-      fetchOptionalRows(auxiliaryUrls.byElectionDistrict, requestInit),
+      fetch(cacheBustedUrl(dataUrl, cacheBust), requestInit),
+      fetchOptionalRows(cacheBustedUrl(auxiliaryUrls.districtReporting, cacheBust), requestInit),
+      fetchOptionalRows(cacheBustedUrl(auxiliaryUrls.byElectionDistrict, cacheBust), requestInit),
     ]);
 
     if (!upstream.ok) {
@@ -570,6 +571,13 @@ export function reportingDataUrls(sourceUrl = DEFAULT_SOURCE) {
     districtReporting: electionFeedUrl(sourceUrl, DISTRICT_REPORTING_FEED),
     byElectionDistrict: electionFeedUrl(sourceUrl, BY_ELECTION_DISTRICT_FEED),
   };
+}
+
+export function cacheBustedUrl(sourceUrl, timestamp = Date.now()) {
+  if (!sourceUrl) return sourceUrl;
+  const url = new URL(sourceUrl);
+  url.searchParams.set("t", String(timestamp));
+  return url.toString();
 }
 
 function electionFeedUrl(sourceUrl, feedName) {
