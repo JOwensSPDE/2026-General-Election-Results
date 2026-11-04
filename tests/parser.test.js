@@ -113,8 +113,20 @@ const sitmapFixture = {
   dataAsOf: "2026-11-04T00:43:36.904Z",
   test: false,
   tallies: [
-    { chamber: "senate", control: { dem: 36, rep: 31 }, open: 33 },
-    { chamber: "house", control: { dem: 13, rep: 4 }, open: 418 },
+    {
+      chamber: "senate",
+      won: { dem: 2 },
+      holdover: { dem: 32, ind: 2, rep: 31 },
+      control: { dem: 36, rep: 31 },
+      open: 33,
+    },
+    {
+      chamber: "house",
+      won: { dem: 10, rep: 5 },
+      unopposed: { dem: 4 },
+      control: { dem: 14, rep: 5 },
+      open: 416,
+    },
   ],
 };
 
@@ -163,6 +175,44 @@ test("calculates reporting and outstanding precincts for each race", () => {
     label: "Precincts reporting in this race",
   });
   assert.deepEqual(reporting["state-representative-district-1"], {
+    reported: 1,
+    total: 2,
+    percentage: 50,
+    outstanding: 1,
+    label: "Precincts reporting in this race",
+  });
+});
+
+test("does not treat early or absentee votes as a reported election-day precinct", () => {
+  const rows = [
+    {
+      "Contest Title": "U.S. Senator",
+      "Election District": "Election District 01-01",
+      "Machine Votes": 0,
+      "Absentee Votes": 39,
+      "Early Voting Votes": 177,
+      "Total Votes": 216,
+    },
+    {
+      "Contest Title": "U.S. Senator",
+      "Election District": "Election District 01-02",
+      "Machine Votes": 0,
+      "Absentee Votes": 44,
+      "Early Voting Votes": 229,
+      "Total Votes": 273,
+    },
+  ];
+
+  assert.deepEqual(parseRaceReporting(rows, [])["u-s-senator"], {
+    reported: 0,
+    total: 2,
+    percentage: 0,
+    outstanding: 2,
+    label: "Precincts reporting in this race",
+  });
+
+  rows[0]["Machine Votes"] = 12;
+  assert.deepEqual(parseRaceReporting(rows, [])["u-s-senator"], {
     reported: 1,
     total: 2,
     percentage: 50,
@@ -260,10 +310,10 @@ test("parses the national JSON fallback totals", () => {
     majority: 51,
   });
   assert.deepEqual(parsed.chambers.house, {
-    democratic: 13,
-    republican: 4,
+    democratic: 10,
+    republican: 5,
     other: 0,
-    uncalled: 418,
+    uncalled: 420,
     total: 435,
     majority: 218,
   });
@@ -290,7 +340,7 @@ test("scheduled civicAPI refresh caches balance totals without requesting Delawa
   try {
     worker.scheduled(
       { scheduledTime: Date.parse("2026-11-04T00:15:00Z") },
-      { RESULTS_CACHE: kv },
+      { RESULTS_CACHE: kv, BALANCE_FALLBACK_ENABLED: "false" },
       { waitUntil(promise) { scheduledWork = promise; } },
     );
     assert.ok(scheduledWork);
@@ -306,15 +356,15 @@ test("scheduled civicAPI refresh caches balance totals without requesting Delawa
   assert.equal(stored.source, "civicAPI");
 });
 
-test("scheduled balance refresh uses the JSON fallback when civicAPI is unavailable", async () => {
+test("scheduled balance refresh uses the one-minute JSON feed before the direct civicAPI search", async () => {
   const kv = createKv();
   const originalFetch = globalThis.fetch;
   const requested = [];
   globalThis.fetch = async input => {
     const url = String(input);
     requested.push(url);
-    if (url.includes("civicapi.org/api/v2/race/search")) return new Response("Unavailable", { status: 503 });
     if (url.includes("sitmap.live/api/elections/us-2026.json")) return Response.json(sitmapFixture);
+    if (url.includes("civicapi.org/api/v2/race/search")) return new Response("Unavailable", { status: 503 });
     return new Response("Not found", { status: 404 });
   };
   let scheduledWork;
@@ -331,12 +381,13 @@ test("scheduled balance refresh uses the JSON fallback when civicAPI is unavaila
   }
 
   const stored = await kv.get("delaware-general-results-2026:civicapi-balance:last-good", "json");
-  const status = await kv.get("delaware-general-results-2026:civicapi-balance:refresh-status", "json");
-  assert.equal(requested.length, 3);
+  const status = await kv.get("delaware-general-results-2026:civicapi-balance:refresh-status-v2", "json");
+  assert.equal(requested.length, 1);
+  assert.match(requested[0], /sitmap\.live/);
   assert.equal(stored.source, "civicAPI via sitmap.live");
   assert.equal(stored.chambers.senate.democratic, 36);
-  assert.equal(stored.chambers.house.republican, 4);
-  assert.match(stored.primaryError, /HTTP 503/);
+  assert.equal(stored.chambers.house.democratic, 10);
+  assert.equal(stored.chambers.house.republican, 5);
   assert.equal(status.lastError, null);
   assert.equal(status.consecutiveFailures, 0);
 });
