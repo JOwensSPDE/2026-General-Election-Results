@@ -9,6 +9,7 @@ const DEFAULT_BALANCE_REFRESH_START = "2026-11-03T19:00:00-05:00";
 const DEFAULT_BALANCE_REFRESH_END = "2026-11-04T08:00:00-05:00";
 const CIVICAPI_SEARCH_ENDPOINT = "https://civicapi.org/api/v2/race/search";
 const CIVICAPI_RESULTS_URL = "https://civicapi.org/results";
+const DEFAULT_BALANCE_FALLBACK_URL = "https://sitmap.live/api/elections/us-2026.json";
 const SENATE_HOLDOVERS = { democratic: 34, republican: 31 };
 const STATEWIDE_FEED = "Election_StatewideResults_ID";
 const DISTRICT_REPORTING_FEED = "Election_DistrictReporting_ID";
@@ -52,7 +53,8 @@ export default {
         },
         balanceOfPower: {
           configured: env.CIVICAPI_BALANCE_ENABLED !== "false",
-          provider: "civicAPI",
+          provider: balance?.source || "civicAPI",
+          fallbackConfigured: env.BALANCE_FALLBACK_ENABLED !== "false",
           cacheReady: Boolean(balance),
           lastSuccessAt: balanceStatus?.lastSuccessAt || balance?.fetchedAt || null,
           lastAttemptAt: balanceStatus?.lastAttemptAt || null,
@@ -250,37 +252,18 @@ async function refreshBalanceOfPower(env) {
   if (Number.isFinite(nextAttemptMs) && nextAttemptMs > now.getTime()) return;
 
   try {
-    const requestInit = {
-      headers: {
-        "accept": "application/json",
-        "user-agent": "Spotlight Delaware election-results monitor/1.5 (+https://spotlightdelaware.org)",
-      },
-      cf: { cacheTtl: 0, cacheEverything: false },
-    };
-    const [senateResponse, houseResponse] = await Promise.all([
-      fetch(civicApiSearchUrl("senate", env), requestInit),
-      fetch(civicApiSearchUrl("house", env), requestInit),
-    ]);
-    if (!senateResponse.ok || !houseResponse.ok) {
-      const status = !senateResponse.ok ? senateResponse.status : houseResponse.status;
-      const error = new Error(`civicAPI results feed returned HTTP ${status}`);
-      error.status = status;
-      throw error;
-    }
+    const requestInit = balanceRequestInit();
+    let body;
+    let primaryError = null;
 
-    const [senatePayload, housePayload] = await Promise.all([senateResponse.json(), houseResponse.json()]);
-    const senate = parseCivicApiBalance(senatePayload, "senate");
-    const house = parseCivicApiBalance(housePayload, "house");
-    const sourceUpdatedAt = newestTimestamp(senate.sourceUpdatedAt, house.sourceUpdatedAt);
-    const body = {
-      status: "live",
-      source: "civicAPI",
-      sourceUpdatedAt,
-      fetchedAt: attemptAt,
-      stale: false,
-      sourceUrls: { senate: CIVICAPI_RESULTS_URL, house: CIVICAPI_RESULTS_URL },
-      chambers: { senate: senate.chamber, house: house.chamber },
-    };
+    try {
+      body = await fetchCivicApiBalance(env, requestInit, attemptAt);
+    } catch (error) {
+      primaryError = error;
+      if (env.BALANCE_FALLBACK_ENABLED === "false") throw error;
+      body = await fetchFallbackBalance(env, requestInit, attemptAt);
+      body.primaryError = safeError(primaryError);
+    }
 
     await Promise.all([
       writeBalanceLastGood(env, body),
@@ -306,20 +289,78 @@ async function refreshBalanceOfPower(env) {
   }
 }
 
+function balanceRequestInit() {
+  return {
+    headers: {
+      "accept": "application/json",
+      "user-agent": "Spotlight Delaware election-results monitor/1.6 (+https://spotlightdelaware.org)",
+    },
+    cf: { cacheTtl: 0, cacheEverything: false },
+  };
+}
+
+async function fetchCivicApiBalance(env, requestInit, fetchedAt) {
+  const [senateResponse, houseResponse] = await Promise.all([
+    fetch(civicApiSearchUrl("senate", env), requestInit),
+    fetch(civicApiSearchUrl("house", env), requestInit),
+  ]);
+  if (!senateResponse.ok || !houseResponse.ok) {
+    const status = !senateResponse.ok ? senateResponse.status : houseResponse.status;
+    const error = new Error(`civicAPI results feed returned HTTP ${status}`);
+    error.status = status;
+    throw error;
+  }
+
+  const [senatePayload, housePayload] = await Promise.all([senateResponse.json(), houseResponse.json()]);
+  const senate = parseCivicApiBalance(senatePayload, "senate");
+  const house = parseCivicApiBalance(housePayload, "house");
+  return {
+    status: "live",
+    source: "civicAPI",
+    sourceUpdatedAt: newestTimestamp(senate.sourceUpdatedAt, house.sourceUpdatedAt),
+    fetchedAt,
+    stale: false,
+    sourceUrls: { senate: CIVICAPI_RESULTS_URL, house: CIVICAPI_RESULTS_URL },
+    chambers: { senate: senate.chamber, house: house.chamber },
+  };
+}
+
+async function fetchFallbackBalance(env, requestInit, fetchedAt) {
+  const sourceUrl = env.BALANCE_FALLBACK_URL || DEFAULT_BALANCE_FALLBACK_URL;
+  const response = await fetch(sourceUrl, requestInit);
+  if (!response.ok) {
+    const error = new Error(`National results fallback returned HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+
+  const parsed = parseSitmapBalance(await response.json());
+  return {
+    status: "live",
+    source: "civicAPI via sitmap.live",
+    sourceUpdatedAt: parsed.sourceUpdatedAt,
+    fetchedAt,
+    stale: false,
+    sourceUrls: { senate: sourceUrl, house: sourceUrl },
+    chambers: parsed.chambers,
+  };
+}
+
 export function civicApiSearchUrl(chamberId, env = {}) {
   const chamber = chamberId === "senate" ? "senate" : "house";
   const url = new URL(env.CIVICAPI_SEARCH_URL || CIVICAPI_SEARCH_ENDPOINT);
   url.searchParams.set("country", "US");
-  url.searchParams.set("start_date", "2026-11-03");
-  url.searchParams.set("end_date", "2026-11-03");
-  url.searchParams.set("election_type", chamber);
+  url.searchParams.set("startDate", "2026-11-03");
+  url.searchParams.set("endDate", "2026-11-03");
+  url.searchParams.set("election_type", "General");
+  url.searchParams.set("query", chamber === "senate" ? "US Senate" : "US House");
   url.searchParams.set("limit", "1000");
   return url.toString();
 }
 
 export function parseCivicApiBalance(input, chamberId) {
-  const races = civicApiRaces(input);
-  if (!races.length) throw new Error(`civicAPI ${chamberId} response did not include any races.`);
+  const races = civicApiRaces(input).filter(race => isFederalChamberRace(race, chamberId));
+  if (!races.length) throw new Error(`civicAPI ${chamberId} response did not include any federal ${chamberId} races.`);
 
   const usableRaces = chamberId === "house" ? uniqueVotingHouseRaces(races) : uniqueRaces(races);
   let democraticCalls = 0;
@@ -352,6 +393,38 @@ export function parseCivicApiBalance(input, chamberId) {
     sourceUpdatedAt: newestTimestamp(...timestamps),
     chamber: balanceChamber(democratic, republican, other, totalSeats, majority),
   };
+}
+
+export function parseSitmapBalance(input) {
+  if (!input || typeof input !== "object") throw new Error("National results fallback returned an invalid response.");
+  if (input.test === true) throw new Error("National results fallback returned test data.");
+
+  const tallies = asArray(input.tallies);
+  const senate = sitmapChamber(tallies, "senate", 100, 51);
+  const house = sitmapChamber(tallies, "house", 435, 218);
+  const sourceUpdatedAt = input.dataAsOf || input.lastSuccessfulFetch || input.fetchedAt || input.generatedAt || null;
+
+  return { sourceUpdatedAt, chambers: { senate, house } };
+}
+
+function sitmapChamber(tallies, chamberId, total, majority) {
+  const tally = tallies.find(item => String(item?.chamber || "").toLowerCase() === chamberId);
+  if (!tally) throw new Error(`National results fallback did not include ${chamberId} totals.`);
+
+  const control = tally.control && typeof tally.control === "object" ? tally.control : {};
+  const democratic = nonnegativeInteger(control.dem ?? control.democratic);
+  const republican = nonnegativeInteger(control.rep ?? control.republican);
+  const other = nonnegativeInteger(control.ind) + nonnegativeInteger(control.other);
+  if (democratic + republican + other > total) {
+    throw new Error(`National results fallback contained more ${chamberId} seats than the chamber total.`);
+  }
+
+  return balanceChamber(democratic, republican, other, total, majority);
+}
+
+function nonnegativeInteger(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : 0;
 }
 
 function balanceChamber(democratic, republican, other, total, majority) {
@@ -425,6 +498,15 @@ function raceName(race) {
   const name = race?.election_name || race?.electionName || race?.name || race?.title || "";
   if (typeof name === "string") return name;
   return String(name?.en_US || name?.en || Object.values(name || {})[0] || "");
+}
+
+function isFederalChamberRace(race, chamberId) {
+  const type = String(race?.type || race?.race_type || race?.raceType || "");
+  const name = raceName(race);
+  const office = `${type} ${name}`;
+  const federal = "(?:US|U\\.?S\\.?|United States)";
+  const chamber = chamberId === "senate" ? "Senate" : "House";
+  return new RegExp(`\\b${federal}\\s+${chamber}\\b`, "i").test(office);
 }
 
 function isSpecialElection(race) {
