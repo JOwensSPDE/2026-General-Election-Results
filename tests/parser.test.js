@@ -4,6 +4,7 @@ import worker, {
   attachRaceReporting,
   civicApiSearchUrl,
   parseCivicApiBalance,
+  parseSitmapBalance,
   parseResultsHtml,
   parseResultsJson,
   parseResultsPayload,
@@ -88,22 +89,33 @@ const byElectionDistrictFixture = [
 
 const senateCivicFixture = {
   results: [
-    { race_id: 101, last_updated: "2026-11-04T02:15:00Z", candidates: [{ name: "A", party: "DEM", winner: true }] },
-    { race_id: 102, last_updated: "2026-11-04T02:15:20Z", candidates: [{ name: "B", party: { abbreviation: "GOP" }, winner: 1 }] },
-    { race_id: 103, last_updated: "2026-11-04T02:15:10Z", candidates: [{ name: "C", party: "IND", winner: false }] },
+    { race_id: 101, type: "US Senate", election_name: "Delaware US Senate", last_updated: "2026-11-04T02:15:00Z", candidates: [{ name: "A", party: "DEM", winner: true }] },
+    { race_id: 102, type: "US Senate", election_name: "Georgia US Senate", last_updated: "2026-11-04T02:15:20Z", candidates: [{ name: "B", party: { abbreviation: "GOP" }, winner: 1 }] },
+    { race_id: 103, type: "US Senate", election_name: "Maine US Senate", last_updated: "2026-11-04T02:15:10Z", candidates: [{ name: "C", party: "IND", winner: false }] },
+    { race_id: 104, type: "State Senate", election_name: "US Virgin Islands Senate St. Croix District", candidates: [{ name: "D", party: "DEM", winner: true }] },
   ],
 };
 
 const houseCivicFixture = {
   data: {
     races: [
-      { race_id: 201, province: "NY", district: "1", election_name: "New York US House 1", last_updated: "2026-11-04T02:15:30Z", candidates: [{ name: "A", party: "Democratic", winner: true }] },
-      { race_id: 202, province: "TX", district: "2", election_name: "Texas US House 2", last_updated: "2026-11-04T02:15:40Z", candidates: [{ name: "B", party: "Republican", winner: "yes" }] },
+      { race_id: 201, type: "US House", province: "NY", district: "1", election_name: "New York US House 1", last_updated: "2026-11-04T02:15:30Z", candidates: [{ name: "A", party: "Democratic", winner: true }] },
+      { race_id: 202, type: "US House", province: "TX", district: "2", election_name: "Texas US House 2", last_updated: "2026-11-04T02:15:40Z", candidates: [{ name: "B", party: "Republican", winner: "yes" }] },
       { race_id: 203, province: "DC", district: "At-large", election_name: "District of Columbia Delegate", candidates: [{ name: "C", party: "DEM", winner: true }] },
-      { race_id: 204, province: "AZ", district: "7", election_name: "Arizona US House 7 Special", candidates: [{ name: "D", party: "DEM", winner: true }] },
-      { race_id: 205, province: "AZ", district: "7", election_name: "Arizona US House 7", candidates: [{ name: "E", party: "GOP", winner: true }] },
+      { race_id: 204, type: "US House", province: "AZ", district: "7", election_name: "Arizona US House 7 Special", candidates: [{ name: "D", party: "DEM", winner: true }] },
+      { race_id: 205, type: "US House", province: "AZ", district: "7", election_name: "Arizona US House 7", candidates: [{ name: "E", party: "GOP", winner: true }] },
     ],
   },
+};
+
+const sitmapFixture = {
+  generatedAt: "2026-11-04T00:45:33.208Z",
+  dataAsOf: "2026-11-04T00:43:36.904Z",
+  test: false,
+  tallies: [
+    { chamber: "senate", control: { dem: 36, rep: 31 }, open: 33 },
+    { chamber: "house", control: { dem: 13, rep: 4 }, open: 418 },
+  ],
 };
 
 test("parses statewide contests, parties, totals and reporting", () => {
@@ -204,10 +216,12 @@ test("builds civicAPI Senate and House search requests", () => {
   const house = new URL(civicApiSearchUrl("house"));
   assert.equal(senate.origin + senate.pathname, "https://civicapi.org/api/v2/race/search");
   assert.equal(senate.searchParams.get("country"), "US");
-  assert.equal(senate.searchParams.get("start_date"), "2026-11-03");
-  assert.equal(senate.searchParams.get("end_date"), "2026-11-03");
-  assert.equal(senate.searchParams.get("election_type"), "senate");
-  assert.equal(house.searchParams.get("election_type"), "house");
+  assert.equal(senate.searchParams.get("startDate"), "2026-11-03");
+  assert.equal(senate.searchParams.get("endDate"), "2026-11-03");
+  assert.equal(senate.searchParams.get("election_type"), "General");
+  assert.equal(senate.searchParams.get("query"), "US Senate");
+  assert.equal(house.searchParams.get("election_type"), "General");
+  assert.equal(house.searchParams.get("query"), "US House");
   assert.equal(house.searchParams.get("limit"), "1000");
 });
 
@@ -234,6 +248,31 @@ test("parses civicAPI calls, Senate holdovers and voting House seats", () => {
   });
 });
 
+test("parses the national JSON fallback totals", () => {
+  const parsed = parseSitmapBalance(sitmapFixture);
+  assert.equal(parsed.sourceUpdatedAt, "2026-11-04T00:43:36.904Z");
+  assert.deepEqual(parsed.chambers.senate, {
+    democratic: 36,
+    republican: 31,
+    other: 0,
+    uncalled: 33,
+    total: 100,
+    majority: 51,
+  });
+  assert.deepEqual(parsed.chambers.house, {
+    democratic: 13,
+    republican: 4,
+    other: 0,
+    uncalled: 418,
+    total: 435,
+    majority: 218,
+  });
+});
+
+test("rejects test data from the national JSON fallback", () => {
+  assert.throws(() => parseSitmapBalance({ ...sitmapFixture, test: true }), /test data/i);
+});
+
 test("scheduled civicAPI refresh caches balance totals without requesting Delaware before 7:45 p.m.", async () => {
   const kv = createKv();
   const originalFetch = globalThis.fetch;
@@ -241,8 +280,9 @@ test("scheduled civicAPI refresh caches balance totals without requesting Delawa
   globalThis.fetch = async input => {
     const url = String(input);
     requested.push(url);
-    if (url.includes("election_type=senate")) return Response.json(senateCivicFixture);
-    if (url.includes("election_type=house")) return Response.json(houseCivicFixture);
+    const query = new URL(url).searchParams.get("query");
+    if (query === "US Senate") return Response.json(senateCivicFixture);
+    if (query === "US House") return Response.json(houseCivicFixture);
     return new Response("Not found", { status: 404 });
   };
   let scheduledWork;
@@ -264,6 +304,41 @@ test("scheduled civicAPI refresh caches balance totals without requesting Delawa
   assert.equal(stored.chambers.senate.democratic, 35);
   assert.equal(stored.chambers.house.republican, 2);
   assert.equal(stored.source, "civicAPI");
+});
+
+test("scheduled balance refresh uses the JSON fallback when civicAPI is unavailable", async () => {
+  const kv = createKv();
+  const originalFetch = globalThis.fetch;
+  const requested = [];
+  globalThis.fetch = async input => {
+    const url = String(input);
+    requested.push(url);
+    if (url.includes("civicapi.org/api/v2/race/search")) return new Response("Unavailable", { status: 503 });
+    if (url.includes("sitmap.live/api/elections/us-2026.json")) return Response.json(sitmapFixture);
+    return new Response("Not found", { status: 404 });
+  };
+  let scheduledWork;
+
+  try {
+    worker.scheduled(
+      { scheduledTime: Date.parse("2026-11-04T00:20:00Z") },
+      { RESULTS_CACHE: kv },
+      { waitUntil(promise) { scheduledWork = promise; } },
+    );
+    await scheduledWork;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const stored = await kv.get("delaware-general-results-2026:civicapi-balance:last-good", "json");
+  const status = await kv.get("delaware-general-results-2026:civicapi-balance:refresh-status", "json");
+  assert.equal(requested.length, 3);
+  assert.equal(stored.source, "civicAPI via sitmap.live");
+  assert.equal(stored.chambers.senate.democratic, 36);
+  assert.equal(stored.chambers.house.republican, 4);
+  assert.match(stored.primaryError, /HTTP 503/);
+  assert.equal(status.lastError, null);
+  assert.equal(status.consecutiveFailures, 0);
 });
 
 test("scheduled refresh stores parsed results in KV", async () => {
