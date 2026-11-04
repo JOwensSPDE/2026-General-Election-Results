@@ -2,7 +2,7 @@ const DEFAULT_SOURCE = "https://elections.delaware.gov/results/enr/GE2026.html?g
 const CACHE_KEY = "delaware-general-results-2026:last-good";
 const STATUS_KEY = "delaware-general-results-2026:refresh-status";
 const BALANCE_CACHE_KEY = "delaware-general-results-2026:civicapi-balance:last-good";
-const BALANCE_STATUS_KEY = "delaware-general-results-2026:civicapi-balance:refresh-status";
+const BALANCE_STATUS_KEY = "delaware-general-results-2026:civicapi-balance:refresh-status-v2";
 const DEFAULT_REFRESH_START = "2026-11-03T19:45:00-05:00";
 const DEFAULT_REFRESH_END = "2026-11-04T08:00:00-05:00";
 const DEFAULT_BALANCE_REFRESH_START = "2026-11-03T19:00:00-05:00";
@@ -254,15 +254,21 @@ async function refreshBalanceOfPower(env) {
   try {
     const requestInit = balanceRequestInit();
     let body;
-    let primaryError = null;
-
-    try {
-      body = await fetchCivicApiBalance(env, requestInit, attemptAt);
-    } catch (error) {
-      primaryError = error;
-      if (env.BALANCE_FALLBACK_ENABLED === "false") throw error;
-      body = await fetchFallbackBalance(env, requestInit, attemptAt);
-      body.primaryError = safeError(primaryError);
+    if (env.BALANCE_FALLBACK_ENABLED !== "false" && env.BALANCE_FALLBACK_FIRST !== "false") {
+      try {
+        body = await fetchFallbackBalance(env, requestInit, attemptAt);
+      } catch (fallbackError) {
+        body = await fetchCivicApiBalance(env, requestInit, attemptAt);
+        body.fallbackError = safeError(fallbackError);
+      }
+    } else {
+      try {
+        body = await fetchCivicApiBalance(env, requestInit, attemptAt);
+      } catch (primaryError) {
+        if (env.BALANCE_FALLBACK_ENABLED === "false") throw primaryError;
+        body = await fetchFallbackBalance(env, requestInit, attemptAt);
+        body.primaryError = safeError(primaryError);
+      }
     }
 
     await Promise.all([
@@ -411,10 +417,20 @@ function sitmapChamber(tallies, chamberId, total, majority) {
   const tally = tallies.find(item => String(item?.chamber || "").toLowerCase() === chamberId);
   if (!tally) throw new Error(`National results fallback did not include ${chamberId} totals.`);
 
+  const won = tally.won && typeof tally.won === "object" ? tally.won : null;
+  const holdover = tally.holdover && typeof tally.holdover === "object" ? tally.holdover : {};
   const control = tally.control && typeof tally.control === "object" ? tally.control : {};
-  const democratic = nonnegativeInteger(control.dem ?? control.democratic);
-  const republican = nonnegativeInteger(control.rep ?? control.republican);
-  const other = nonnegativeInteger(control.ind) + nonnegativeInteger(control.other);
+  const democratic = won
+    ? nonnegativeInteger(won.dem ?? won.democratic)
+      + (chamberId === "senate" ? nonnegativeInteger(holdover.dem ?? holdover.democratic) + nonnegativeInteger(holdover.ind) : 0)
+    : nonnegativeInteger(control.dem ?? control.democratic);
+  const republican = won
+    ? nonnegativeInteger(won.rep ?? won.republican)
+      + (chamberId === "senate" ? nonnegativeInteger(holdover.rep ?? holdover.republican) : 0)
+    : nonnegativeInteger(control.rep ?? control.republican);
+  const other = won
+    ? nonnegativeInteger(won.ind) + nonnegativeInteger(won.other)
+    : nonnegativeInteger(control.ind) + nonnegativeInteger(control.other);
   if (democratic + republican + other > total) {
     throw new Error(`National results fallback contained more ${chamberId} seats than the chamber total.`);
   }
@@ -643,7 +659,7 @@ export function parseRaceReporting(electionDistrictInput, districtReportingInput
     const prior = precincts.get(precinct);
     const reported = statusByPrecinct.has(precinct)
       ? statusByPrecinct.get(precinct)
-      : (rowStatus ?? rowHasVotes(row));
+      : (rowStatus ?? rowHasElectionDayVotes(row));
     precincts.set(precinct, Boolean(prior || reported));
   }
 
@@ -697,10 +713,8 @@ function reportedStatus(row) {
   return null;
 }
 
-function rowHasVotes(row) {
-  return rowNumber(row, ["Total Votes", "Votes", "Machine Votes", "Election Day Votes"])
-    + rowNumber(row, ["Absentee Votes"])
-    + rowNumber(row, ["Early Voting Votes"]) > 0;
+function rowHasElectionDayVotes(row) {
+  return rowNumber(row, ["Machine Votes", "Election Day Votes"]) > 0;
 }
 
 function rowNumber(row, aliases) {
