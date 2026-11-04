@@ -1,4 +1,9 @@
-# National-results fallback hotfix
+# Election-results alignment hotfix v3
+
+This version makes two corrections:
+
+- It counts only civicAPI-called House races, excluding unopposed seats, so the House totals align with civicAPI's map. Senate totals continue to include seats not up for election and independents who caucus with Democrats.
+- It no longer treats early or absentee votes as proof that a Delaware election-day precinct has reported. A precinct is counted only after machine votes appear or Delaware supplies an explicit reporting status.
 
 Extract this ZIP into:
 
@@ -9,8 +14,6 @@ Choose **Replace the files in the destination** when Windows asks.
 The ZIP updates:
 
 - `worker\src\index.js`
-- `worker\wrangler.toml`
-- `public\app.js`
 - `tests\parser.test.js`
 
 Then open PowerShell and run:
@@ -39,5 +42,6 @@ Expected result:
 - `/api/balance` has `status: "live"`.
 - When the fallback is active, `source` is `"civicAPI via sitmap.live"`.
 - Senate and House totals are greater than zero once calls are available.
+- Delaware race widgets show zero precincts reported while the official statewide feed remains at zero, even though early and absentee totals are displayed.
 
-Also upload `public/app.js` to the same location in the GitHub repository so the page can identify the fallback source in its status line.
+Commit both updated files to the GitHub repository after deployment.
