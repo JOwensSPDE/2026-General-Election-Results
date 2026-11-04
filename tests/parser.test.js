@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import worker, {
   attachRaceReporting,
+  cacheBustedUrl,
   civicApiSearchUrl,
   parseCivicApiBalance,
   parseSitmapBalance,
@@ -163,6 +164,15 @@ test("derives Delaware's race-reporting feeds from the public results page", () 
       byElectionDistrict: "https://elections.delaware.gov/results/enr/Election_ByElectionDistrict_ID_GE2026.json",
     },
   );
+});
+
+test("adds Delaware's cache-busting timestamp without changing other parameters", () => {
+  const url = new URL(cacheBustedUrl(
+    "https://elections.delaware.gov/results/enr/Election_StatewideResults_ID_GE2026.json?group=Statewide",
+    1793757600000,
+  ));
+  assert.equal(url.searchParams.get("group"), "Statewide");
+  assert.equal(url.searchParams.get("t"), "1793757600000");
 });
 
 test("calculates reporting and outstanding precincts for each race", () => {
@@ -454,6 +464,7 @@ test("scheduled refresh joins the official district feeds into each contest", as
 
   const stored = await kv.get("delaware-general-results-2026:last-good", "json");
   assert.equal(requested.length, 3);
+  assert.ok(requested.every(url => new URL(url).searchParams.has("t")));
   assert.equal(stored.contests[0].reporting.reported, 2);
   assert.equal(stored.contests[0].reporting.total, 3);
   assert.equal(stored.contests[0].reporting.outstanding, 1);
